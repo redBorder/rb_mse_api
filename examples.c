@@ -16,7 +16,7 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new();
+	struct rb_mse_api * rb_mse = rb_mse_api_new(15);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
@@ -25,9 +25,10 @@ int main(int argc,char *argv[]){
 	rb_mse_set_addr(rb_mse, argv[1]);
 	rb_mse_set_userpwd(rb_mse, argv[2]);
 
-	CURLcode retCode = rb_mse_update_macs_pos(rb_mse);
+	CURLcode retCode = CURLE_OK; // rb_mse_update_macs_pos(rb_mse);
 	if(retCode == CURLE_OK)
 	{
+		sleep(10);
 		position = rb_mse_req_for_mac(rb_mse,argv[3]);
 		if(position)
 		{
@@ -44,6 +45,8 @@ int main(int argc,char *argv[]){
 	{
 		fprintf(stderr,"There was an error updating MAC positions: %s",curl_easy_strerror(retCode));
 	}
+
+	sleep(10); // Wating for auto-update. 
 
 	rb_mse_api_destroy(rb_mse);
 

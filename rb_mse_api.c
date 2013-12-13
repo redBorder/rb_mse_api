@@ -102,6 +102,8 @@ struct message_tailq_node{
 
 struct rb_mse_api
 {
+  // MSE update thread.
+  rd_thread_t * rdt;
   /// Curl handler.
   CURL *hnd;
   char * url;
@@ -112,8 +114,11 @@ struct rb_mse_api
   struct curl_slist * slist;
 
   /// MACs positions avl
+  rd_rwlock_t avl_memctx_rwlock;
+  time_t update_time;
   json_t *root;
-  rd_avl_t avl;
+
+  rd_avl_t * avl;
   rd_memctx_t memctx;
   
   json_error_t error;
@@ -144,9 +149,85 @@ static size_t header_function( char * ptr,size_t size, size_t nmemb, void* userd
 
 /*
  *                                 rb_mse API
- */ 
+ */
 
-struct rb_mse_api * rb_mse_api_new()
+static void curl_setopts(CURL * hnd)
+{
+  // curl_easy_setopt(hnd, CURLOPT_HEADERFUNCTION, header_function); /* function called for each header received */ 
+
+  curl_easy_setopt(hnd, CURLOPT_PROXY, NULL);
+  curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1);
+  curl_easy_setopt(hnd, CURLOPT_HEADER, 0 /*"Accept: application/json"*/);
+  curl_easy_setopt(hnd, CURLOPT_FAILONERROR, 0);
+  curl_easy_setopt(hnd, CURLOPT_UPLOAD, 0);
+  curl_easy_setopt(hnd, CURLOPT_DIRLISTONLY, 0);
+  curl_easy_setopt(hnd, CURLOPT_APPEND, 0);
+  curl_easy_setopt(hnd, CURLOPT_NETRC, 0);
+  curl_easy_setopt(hnd, CURLOPT_FOLLOWLOCATION, 0);
+  curl_easy_setopt(hnd, CURLOPT_UNRESTRICTED_AUTH, 0);
+  curl_easy_setopt(hnd, CURLOPT_TRANSFERTEXT, 0);
+  curl_easy_setopt(hnd, CURLOPT_PROXYUSERPWD, NULL);
+  curl_easy_setopt(hnd, CURLOPT_NOPROXY, NULL);
+  curl_easy_setopt(hnd, CURLOPT_RANGE, NULL);
+  /* curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, 0x7fff57485c50); [REMARK] */
+  curl_easy_setopt(hnd, CURLOPT_TIMEOUT, 0);
+  curl_easy_setopt(hnd, CURLOPT_REFERER, NULL);
+  curl_easy_setopt(hnd, CURLOPT_AUTOREFERER, 0);
+  curl_easy_setopt(hnd, CURLOPT_USERAGENT, "curl/7.19.7 (x86_64-redhat-linux-gnu) libcurl/7.23.1 OpenSSL/1.0.1c zlib/1.2.6");
+  curl_easy_setopt(hnd, CURLOPT_FTPPORT, NULL);
+  curl_easy_setopt(hnd, CURLOPT_LOW_SPEED_LIMIT, 0);
+  curl_easy_setopt(hnd, CURLOPT_LOW_SPEED_TIME, 0);
+  curl_easy_setopt(hnd, CURLOPT_MAX_SEND_SPEED_LARGE, (curl_off_t)0);
+  curl_easy_setopt(hnd, CURLOPT_MAX_RECV_SPEED_LARGE, (curl_off_t)0);
+  curl_easy_setopt(hnd, CURLOPT_RESUME_FROM_LARGE, (curl_off_t)0);
+  curl_easy_setopt(hnd, CURLOPT_COOKIE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSLCERT, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSLCERTTYPE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSLKEY, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSLKEYTYPE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_KEYPASSWD, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSH_PRIVATE_KEYFILE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSH_PUBLIC_KEYFILE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSH_HOST_PUBLIC_KEY_MD5, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSL_VERIFYPEER, 0);
+  curl_easy_setopt(hnd, CURLOPT_SSL_VERIFYHOST, 0);
+  curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50);
+  curl_easy_setopt(hnd, CURLOPT_CRLF, 0);
+  curl_easy_setopt(hnd, CURLOPT_QUOTE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_POSTQUOTE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_PREQUOTE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_WRITEHEADER, NULL);
+  curl_easy_setopt(hnd, CURLOPT_COOKIEFILE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_COOKIESESSION, 0);
+  curl_easy_setopt(hnd, CURLOPT_SSLVERSION, 0);
+  curl_easy_setopt(hnd, CURLOPT_TIMECONDITION, 0);
+  curl_easy_setopt(hnd, CURLOPT_TIMEVALUE, 0);
+  curl_easy_setopt(hnd, CURLOPT_CUSTOMREQUEST, NULL);
+  /* curl_easy_setopt(hnd, CURLOPT_STDERR, 0x7f2abcc03860); [REMARK] */
+  curl_easy_setopt(hnd, CURLOPT_HTTPPROXYTUNNEL, 0);
+  curl_easy_setopt(hnd, CURLOPT_INTERFACE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_KRBLEVEL, NULL);
+  curl_easy_setopt(hnd, CURLOPT_TELNETOPTIONS, NULL);
+  curl_easy_setopt(hnd, CURLOPT_RANDOM_FILE, NULL);
+  curl_easy_setopt(hnd, CURLOPT_EGDSOCKET, NULL);
+  curl_easy_setopt(hnd, CURLOPT_CONNECTTIMEOUT, 0);
+  curl_easy_setopt(hnd, CURLOPT_ENCODING, NULL);
+  curl_easy_setopt(hnd, CURLOPT_FTP_CREATE_MISSING_DIRS, 0);
+  curl_easy_setopt(hnd, CURLOPT_IPRESOLVE, 0);
+  curl_easy_setopt(hnd, CURLOPT_FTP_ACCOUNT, NULL);
+  curl_easy_setopt(hnd, CURLOPT_IGNORE_CONTENT_LENGTH, 0);
+  curl_easy_setopt(hnd, CURLOPT_FTP_SKIP_PASV_IP, 0);
+  curl_easy_setopt(hnd, CURLOPT_FTP_FILEMETHOD, 0);
+  curl_easy_setopt(hnd, CURLOPT_FTP_ALTERNATIVE_TO_USER, NULL);
+  curl_easy_setopt(hnd, CURLOPT_SSL_SESSIONID_CACHE, 1);
+  /* curl_easy_setopt(hnd, CURLOPT_SOCKOPTFUNCTION, 0x405c90); [REMARK] */
+  /* curl_easy_setopt(hnd, CURLOPT_SOCKOPTDATA, 0x7fff57485670); [REMARK] */
+  curl_easy_setopt(hnd, CURLOPT_POSTREDIR, 0);
+}
+
+static void *rb_mse_autoupdate(void *rb_mse); /* FW declaration */
+
+struct rb_mse_api * rb_mse_api_new(time_t update_time)
 {
   struct rb_mse_api * rb_mse = calloc(1,sizeof(struct rb_mse_api));
   if(rb_mse)
@@ -159,77 +240,8 @@ struct rb_mse_api * rb_mse_api_new()
     {
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEDATA, rb_mse);               /* void passed to WRITEFUNCTION */
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEFUNCTION, write_function);   /* function called for each data received */ 
-      // curl_easy_setopt(rb_mse->hnd, CURLOPT_HEADERFUNCTION, header_function); /* function called for each header received */ 
-
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_PROXY, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_NOPROGRESS, 1);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_HEADER, 0 /*"Accept: application/json"*/);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FAILONERROR, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_UPLOAD, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_DIRLISTONLY, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_APPEND, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_NETRC, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FOLLOWLOCATION, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_UNRESTRICTED_AUTH, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_TRANSFERTEXT, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_PROXYUSERPWD, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_NOPROXY, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_RANGE, NULL);
-      /* curl_easy_setopt(rb_mse->hnd, CURLOPT_ERRORBUFFER, 0x7fff57485c50); [REMARK] */
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_TIMEOUT, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_REFERER, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_AUTOREFERER, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_USERAGENT, "curl/7.19.7 (x86_64-redhat-linux-gnu) libcurl/7.23.1 OpenSSL/1.0.1c zlib/1.2.6");
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FTPPORT, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_LOW_SPEED_LIMIT, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_LOW_SPEED_TIME, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_MAX_SEND_SPEED_LARGE, (curl_off_t)0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_MAX_RECV_SPEED_LARGE, (curl_off_t)0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_RESUME_FROM_LARGE, (curl_off_t)0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_COOKIE, NULL);
       curl_easy_setopt(rb_mse->hnd, CURLOPT_HTTPHEADER, rb_mse->slist);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSLCERT, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSLCERTTYPE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSLKEY, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSLKEYTYPE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_KEYPASSWD, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSH_PRIVATE_KEYFILE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSH_PUBLIC_KEYFILE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSH_HOST_PUBLIC_KEY_MD5, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSL_VERIFYPEER, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSL_VERIFYHOST, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_MAXREDIRS, 50);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_CRLF, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_QUOTE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_POSTQUOTE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_PREQUOTE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEHEADER, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_COOKIEFILE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_COOKIESESSION, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSLVERSION, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_TIMECONDITION, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_TIMEVALUE, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_CUSTOMREQUEST, NULL);
-      /* curl_easy_setopt(rb_mse->hnd, CURLOPT_STDERR, 0x7f2abcc03860); [REMARK] */
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_HTTPPROXYTUNNEL, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_INTERFACE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_KRBLEVEL, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_TELNETOPTIONS, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_RANDOM_FILE, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_EGDSOCKET, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_CONNECTTIMEOUT, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_ENCODING, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FTP_CREATE_MISSING_DIRS, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_IPRESOLVE, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FTP_ACCOUNT, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_IGNORE_CONTENT_LENGTH, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FTP_SKIP_PASV_IP, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FTP_FILEMETHOD, 0);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_FTP_ALTERNATIVE_TO_USER, NULL);
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_SSL_SESSIONID_CACHE, 1);
-      /* curl_easy_setopt(rb_mse->hnd, CURLOPT_SOCKOPTFUNCTION, 0x405c90); [REMARK] */
-      /* curl_easy_setopt(rb_mse->hnd, CURLOPT_SOCKOPTDATA, 0x7fff57485670); [REMARK] */
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_POSTREDIR, 0);
+      curl_setopts(rb_mse->hnd);
     }
     else // curl_easy_init error
     {
@@ -241,7 +253,14 @@ struct rb_mse_api * rb_mse_api_new()
     {
       strbuffer_init(&rb_mse->buffer);
       rd_memctx_init (&rb_mse->memctx, "rb_mse", RD_MEMCTX_F_TRACK);
-      rd_avl_init (&rb_mse->avl, mse_positions_cmp, 0);
+      rb_mse->avl = rd_avl_init (NULL, mse_positions_cmp,0);
+    }
+
+    if(rb_mse)
+    {
+      rd_rwlock_init(&rb_mse->avl_memctx_rwlock);
+      rb_mse->update_time = update_time;
+      rd_thread_create(&rb_mse->rdt,"MSE updater",0,rb_mse_autoupdate,rb_mse);
     }
   }
 
@@ -265,6 +284,8 @@ CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
     return CURLE_OUT_OF_MEMORY;
   }
 }
+
+void rb_mse_clean(struct rb_mse_api *mse); /* FW declaration */
 
 int rb_mse_isempty(const struct rb_mse_api *rb_mse)
 {
@@ -345,6 +366,12 @@ CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
           {
             if(json_is_array(entries))
             {
+              rd_rwlock_wrlock(&rb_mse->avl_memctx_rwlock);
+
+              if(!rb_mse_isempty(rb_mse))
+              {
+                rb_mse_clean(rb_mse);
+              }
               unsigned int i;
               for(i = 0; ret == CURLE_OK && i < json_array_size(entries); i++)
               {
@@ -403,14 +430,15 @@ CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
                     node->position->floor = strtok_r(NULL      ,">",&aux);
 
                     // printf("Inserting node\n");
-                    RD_AVL_INSERT(&rb_mse->avl,node,rd_avl_node);
+                    RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
                   }
                 }
                 else
                 {
                   ret = -4;
                 }
-              }
+              } /* for */
+              rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
             }
             else
             {
@@ -430,6 +458,19 @@ CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
   return ret;
 }
 
+static void *rb_mse_autoupdate(void *_rb_mse)
+{
+  struct rb_mse_api * rb_mse = _rb_mse;
+  while(rd_currthread_get()->rdt_state != RD_THREAD_S_EXITING)
+  {
+    printf("Updating\n");
+    rb_mse_update_macs_pos(rb_mse);
+    sleep(rb_mse->update_time);
+  }
+  rd_thread_cleanup();
+  return NULL;
+}
+
 const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const char *mac)
 {
   const struct mse_positions_list_node search_node = {
@@ -439,21 +480,33 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const
     .mac = mac_from_str(mac)
   };
 
-  const struct mse_positions_list_node * ret_node=rd_avl_find(&rb_mse->avl,&search_node,0);
-  return ret_node->position;
+  rd_rwlock_rdlock(&rb_mse->avl_memctx_rwlock);
+  const struct mse_positions_list_node * ret_node=rd_avl_find(rb_mse->avl,&search_node,1 /* rlock */);
+  rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
+
+  return ret_node ? ret_node->position : NULL;
+}
+
+/* Note: this function assumes rb_mse->avl_memctx_rwlock is locked */
+void rb_mse_clean(struct rb_mse_api * rb_mse)
+{
+  strbuffer_clear(&rb_mse->buffer);
+  json_decref(rb_mse->root);
+  rd_memctx_freeall(&rb_mse->memctx);
+  rd_memctx_destroy(&rb_mse->memctx);
+  rd_avl_destroy(rb_mse->avl);
+  rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
 void rb_mse_api_destroy(struct rb_mse_api * rb_mse)
 {
+  void * void_val;
+  rd_thread_kill_join(rb_mse->rdt,&void_val);
+  rb_mse_clean(rb_mse);
   curl_slist_free_all(rb_mse->slist); /* free the list again */
   free(rb_mse->url);
-  strbuffer_close(&rb_mse->buffer);
   curl_easy_cleanup(rb_mse->hnd);
-  json_decref(rb_mse->root);
-  rd_memctx_freeall(&rb_mse->memctx);
-  rd_memctx_destroy(&rb_mse->memctx);
   free(rb_mse);
-
   curl_global_cleanup();
 }
 
