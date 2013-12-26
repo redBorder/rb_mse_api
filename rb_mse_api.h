@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <stdint.h>
 #include "curl/curl.h"
 
 /// Struct that holds the position of the MAC
@@ -54,19 +55,22 @@ CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpwd);
 */
 const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const char *mac);
 
-int rb_mse_isempty(const struct rb_mse_api * rb_mse);
-
 /**
-  Update all macs pos in the MSE
-  @TODO Make another errorcode so we can send
-  errors parsing the response.
- */
-CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse);
+  Get the position of a mac from MSE
+  @param rb_mse rb_mse_api struct that hold all curl information
+  @param pos    pointer to a pointer to position. If *pos=NULL, 
+  @param mac    MAC address you want to know the position
+  @return       position of the mac
+  @see struct rb_mse_api_pos
+  @see rb_mse_pos_destroy
+*/
+const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uint64_t mac);
+
+int rb_mse_isempty(const struct rb_mse_api * rb_mse);
 
 
 /* call curl_easy_setopt in rb_mse_api */
 CURLcode rb_mse_set_curlopt(struct rb_mse_api* ,const int CURLOPT,void * opt);
 
+/* clean the handle */
 void rb_mse_api_destroy(struct rb_mse_api* );
-
-

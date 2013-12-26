@@ -11,7 +11,9 @@
 #include "stdlib.h"
 #include "string.h"
 
-const char mse_api_call_url[] = "/api/contextaware/v1/location/clients/";
+static const char mse_api_call_url[] = "/api/contextaware/v1/location/clients/";
+
+static pthread_mutex_t curl_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static inline uint64_t mac_from_str(const char *mac)
 {
@@ -19,7 +21,6 @@ static inline uint64_t mac_from_str(const char *mac)
   sscanf(mac,"%lx:%lx:%lx:%lx:%lx:%lx",&one,&two,&three,&four,&five,&six);
   return (((((((((one<<8)+two)<<8)+three)<<8)+four)<<8)+five)<<8)+six;
 }
-
 
 
 /* ============================================================ *
@@ -227,69 +228,15 @@ static void curl_setopts(CURL * hnd)
 
 static void *rb_mse_autoupdate(void *rb_mse); /* FW declaration */
 
-struct rb_mse_api * rb_mse_api_new(time_t update_time)
+/* Note: this function assumes rb_mse->avl_memctx_rwlock is locked */
+static void rb_mse_clean(struct rb_mse_api * rb_mse)
 {
-  struct rb_mse_api * rb_mse = calloc(1,sizeof(struct rb_mse_api));
-  if(rb_mse)
-  {
-    rb_mse->slist = curl_slist_append(NULL, "Accept: application/json");
-
-    curl_global_init(CURL_GLOBAL_SSL);
-    rb_mse->hnd = curl_easy_init();
-    if(rb_mse->hnd)
-    {
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEDATA, rb_mse);               /* void passed to WRITEFUNCTION */
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEFUNCTION, write_function);   /* function called for each data received */ 
-      curl_easy_setopt(rb_mse->hnd, CURLOPT_HTTPHEADER, rb_mse->slist);
-      curl_setopts(rb_mse->hnd);
-    }
-    else // curl_easy_init error
-    {
-      free(rb_mse);
-      rb_mse=NULL;
-    }
-
-    if(rb_mse)
-    {
-      strbuffer_init(&rb_mse->buffer);
-      rd_memctx_init (&rb_mse->memctx, "rb_mse", RD_MEMCTX_F_TRACK);
-      rb_mse->avl = rd_avl_init (NULL, mse_positions_cmp,0);
-    }
-
-    if(rb_mse)
-    {
-      rd_rwlock_init(&rb_mse->avl_memctx_rwlock);
-      rb_mse->update_time = update_time;
-      rd_thread_create(&rb_mse->rdt,"MSE updater",0,rb_mse_autoupdate,rb_mse);
-    }
-  }
-
-  return rb_mse;
-}
-
-CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpwd)
-{
-  return curl_easy_setopt(rb_mse->hnd, CURLOPT_USERPWD, userpwd);;
-}
-
-
-CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
-{
-  const size_t url_size = sizeof("https://")  + strlen(addr) + sizeof(mse_api_call_url);
-  rb_mse->url = malloc(sizeof(char)*url_size);
-  if(rb_mse->url){
-    snprintf(rb_mse->url,url_size,"https://%s%s",addr,mse_api_call_url);
-    return CURLE_OK;
-  }else{
-    return CURLE_OUT_OF_MEMORY;
-  }
-}
-
-void rb_mse_clean(struct rb_mse_api *mse); /* FW declaration */
-
-int rb_mse_isempty(const struct rb_mse_api *rb_mse)
-{
-  return rb_mse->memctx.rmc_out==0;
+  strbuffer_clear(&rb_mse->buffer);
+  json_decref(rb_mse->root);
+  rd_memctx_freeall(&rb_mse->memctx);
+  rd_memctx_destroy(&rb_mse->memctx);
+  rd_avl_destroy(rb_mse->avl);
+  rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
 /**
@@ -343,7 +290,7 @@ int rb_mse_isempty(const struct rb_mse_api *rb_mse)
     }
 
  */
-CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
+static CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
 {
   assert(rb_mse);
 
@@ -458,6 +405,7 @@ CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
   return ret;
 }
 
+
 static void *rb_mse_autoupdate(void *_rb_mse)
 {
   struct rb_mse_api * rb_mse = _rb_mse;
@@ -471,13 +419,87 @@ static void *rb_mse_autoupdate(void *_rb_mse)
   return NULL;
 }
 
+/* Public API */
+
+struct rb_mse_api * rb_mse_api_new(time_t update_time)
+{
+  struct rb_mse_api * rb_mse = calloc(1,sizeof(struct rb_mse_api));
+  if(rb_mse)
+  {
+    rb_mse->slist = curl_slist_append(NULL, "Accept: application/json");
+
+    pthread_mutex_lock(&curl_global_mutex);
+    curl_global_init(CURL_GLOBAL_SSL);
+    pthread_mutex_unlock(&curl_global_mutex);
+
+    rb_mse->hnd = curl_easy_init();
+    if(rb_mse->hnd)
+    {
+      curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEDATA, rb_mse);               /* void passed to WRITEFUNCTION */
+      curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEFUNCTION, write_function);   /* function called for each data received */ 
+      curl_easy_setopt(rb_mse->hnd, CURLOPT_HTTPHEADER, rb_mse->slist);
+      curl_setopts(rb_mse->hnd);
+    }
+    else // curl_easy_init error
+    {
+      free(rb_mse);
+      rb_mse=NULL;
+    }
+
+    if(rb_mse)
+    {
+      strbuffer_init(&rb_mse->buffer);
+      rd_memctx_init (&rb_mse->memctx, "rb_mse", RD_MEMCTX_F_TRACK);
+      rb_mse->avl = rd_avl_init (NULL, mse_positions_cmp,0);
+    }
+
+    if(rb_mse)
+    {
+      rd_rwlock_init(&rb_mse->avl_memctx_rwlock);
+      rb_mse->update_time = update_time;
+      rd_thread_create(&rb_mse->rdt,"MSE updater",0,rb_mse_autoupdate,rb_mse);
+    }
+  }
+
+  return rb_mse;
+}
+
+CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpwd)
+{
+  return curl_easy_setopt(rb_mse->hnd, CURLOPT_USERPWD, userpwd);;
+}
+
+
+CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
+{
+  const size_t url_size = sizeof("https://")  + strlen(addr) + sizeof(mse_api_call_url);
+  rb_mse->url = malloc(sizeof(char)*url_size);
+  if(rb_mse->url){
+    snprintf(rb_mse->url,url_size,"https://%s%s",addr,mse_api_call_url);
+    return CURLE_OK;
+  }else{
+    return CURLE_OUT_OF_MEMORY;
+  }
+}
+
+int rb_mse_isempty(const struct rb_mse_api *rb_mse)
+{
+  return rb_mse->memctx.rmc_out==0;
+}
+
+
 const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const char *mac)
+{
+  return rb_mse_req_for_mac_i(rb_mse,mac_from_str(mac));
+}
+
+const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uint64_t mac)
 {
   const struct mse_positions_list_node search_node = {
     #ifdef MSE_POSITION_LIST_MAGIC
     .magic = MSE_POSITION_LIST_MAGIC,
     #endif
-    .mac = mac_from_str(mac)
+    .mac = mac
   };
 
   rd_rwlock_rdlock(&rb_mse->avl_memctx_rwlock);
@@ -485,17 +507,6 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const
   rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   return ret_node ? ret_node->position : NULL;
-}
-
-/* Note: this function assumes rb_mse->avl_memctx_rwlock is locked */
-void rb_mse_clean(struct rb_mse_api * rb_mse)
-{
-  strbuffer_clear(&rb_mse->buffer);
-  json_decref(rb_mse->root);
-  rd_memctx_freeall(&rb_mse->memctx);
-  rd_memctx_destroy(&rb_mse->memctx);
-  rd_avl_destroy(rb_mse->avl);
-  rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
 void rb_mse_api_destroy(struct rb_mse_api * rb_mse)
@@ -507,6 +518,9 @@ void rb_mse_api_destroy(struct rb_mse_api * rb_mse)
   free(rb_mse->url);
   curl_easy_cleanup(rb_mse->hnd);
   free(rb_mse);
+
+  pthread_mutex_lock(&curl_global_mutex);
   curl_global_cleanup();
+  pthread_mutex_unlock(&curl_global_mutex);
 }
 
