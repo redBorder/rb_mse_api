@@ -29,20 +29,7 @@ const char * rb_mse_pos_zone(const struct rb_mse_api_pos *pos);
   @note after this call, errno can be:
      ENOMEM: malloc error
 */
-struct rb_mse_api * rb_mse_api_new(time_t update_time);
-
-
-/**
-   Sets MSE address
-   @param addr MSE address
-   @return CURLE_OK or CURLE_OUT_OF_MEMORY
-*/
-CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr);
-
-/**
-   Set MSE user:password
-   */
-CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpwd);
+struct rb_mse_api * rb_mse_api_new(time_t update_time,const char * addr,const char *userpwd);
 
 /**
 	Get the position of a mac from MSE
