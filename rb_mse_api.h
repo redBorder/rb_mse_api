@@ -29,7 +29,7 @@ const char * rb_mse_pos_zone(const struct rb_mse_api_pos *pos);
   @note after this call, errno can be:
      ENOMEM: malloc error
 */
-struct rb_mse_api * rb_mse_api_new(time_t update_time);
+struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const char *userpass);
 
 
 /**

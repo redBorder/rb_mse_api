@@ -368,7 +368,7 @@ static CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
                     node->magic = MSE_POSITION_LIST_MAGIC;
                     #endif
                     node->mac =  mac_from_str(macAddress);
-                    // printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
+                    //printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
                     
                     char * map_string = rd_memctx_strdup(&rb_mse->memctx,mapHierarchyString); // Will free() with pos
                     char * aux;
@@ -376,7 +376,7 @@ static CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
                     node->position->build = strtok_r(NULL      ,">",&aux);
                     node->position->floor = strtok_r(NULL      ,">",&aux);
 
-                    // printf("Inserting node\n");
+                    //printf("Inserting node\n");
                     RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
                   }
                 }
@@ -413,6 +413,7 @@ static void *rb_mse_autoupdate(void *_rb_mse)
   {
     printf("Updating\n");
     rb_mse_update_macs_pos(rb_mse);
+    printf("Updated\n");
     sleep(rb_mse->update_time);
   }
   rd_thread_cleanup();
@@ -421,7 +422,7 @@ static void *rb_mse_autoupdate(void *_rb_mse)
 
 /* Public API */
 
-struct rb_mse_api * rb_mse_api_new(time_t update_time)
+struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const char * userpwd)
 {
   struct rb_mse_api * rb_mse = calloc(1,sizeof(struct rb_mse_api));
   if(rb_mse)
@@ -439,6 +440,8 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time)
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEFUNCTION, write_function);   /* function called for each data received */ 
       curl_easy_setopt(rb_mse->hnd, CURLOPT_HTTPHEADER, rb_mse->slist);
       curl_setopts(rb_mse->hnd);
+      rb_mse_set_addr(rb_mse, addr);
+      rb_mse_set_userpwd(rb_mse, userpwd);
     }
     else // curl_easy_init error
     {

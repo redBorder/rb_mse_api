@@ -3,6 +3,7 @@
 #include "rb_mse_api.h"
 
 #include <assert.h>
+#include <unistd.h>
 
 void printUsage(char *argv0)
 {
@@ -16,19 +17,18 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new(15);
+	struct rb_mse_api * rb_mse = rb_mse_api_new(15, argv[1], argv[2]);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
 
 	const struct rb_mse_api_pos * position=NULL;
-	rb_mse_set_addr(rb_mse, argv[1]);
-	rb_mse_set_userpwd(rb_mse, argv[2]);
 
 	CURLcode retCode = CURLE_OK; // rb_mse_update_macs_pos(rb_mse);
 	if(retCode == CURLE_OK)
 	{
-		sleep(10);
+		printf("Sleeping until mac_position filled\n");
+		sleep(5);
 		position = rb_mse_req_for_mac(rb_mse,argv[3]);
 		if(position)
 		{
@@ -46,7 +46,7 @@ int main(int argc,char *argv[]){
 		fprintf(stderr,"There was an error updating MAC positions: %s",curl_easy_strerror(retCode));
 	}
 
-	sleep(10); // Wating for auto-update. 
+	sleep(5); // Wating for auto-update. 
 
 	rb_mse_api_destroy(rb_mse);
 
