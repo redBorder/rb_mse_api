@@ -15,7 +15,7 @@ rb_mse_api.o: rb_mse_api.c rb_mse_api.h
 strbuffer.o: strbuffer.c strbuffer.h
 	cc ${CFLAGS} -o $@ $< -c
 
-librb_mse_api.so: rb_mse_api.o 
+librb_mse_api.so: rb_mse_api.o strbuffer.o
 	cc -shared -o $@ $^  $(LDFLAGS) -lcurl -ljansson -lrd
 
 examples: examples.c rb_mse_api.o strbuffer.o 

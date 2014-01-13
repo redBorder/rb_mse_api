@@ -420,6 +420,24 @@ static void *rb_mse_autoupdate(void *_rb_mse)
   return NULL;
 }
 
+static CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpwd)
+{
+  return curl_easy_setopt(rb_mse->hnd, CURLOPT_USERPWD, userpwd);;
+}
+
+
+static CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
+{
+  const size_t url_size = sizeof("https://")  + strlen(addr) + sizeof(mse_api_call_url);
+  rb_mse->url = malloc(sizeof(char)*url_size);
+  if(rb_mse->url){
+    snprintf(rb_mse->url,url_size,"https://%s%s",addr,mse_api_call_url);
+    return CURLE_OK;
+  }else{
+    return CURLE_OUT_OF_MEMORY;
+  }
+}
+
 /* Public API */
 
 struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const char * userpwd)
@@ -427,6 +445,9 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
   struct rb_mse_api * rb_mse = calloc(1,sizeof(struct rb_mse_api));
   if(rb_mse)
   {
+    rb_mse_set_userpwd(rb_mse, userpwd);
+    rb_mse_set_addr(rb_mse, addr);
+
     rb_mse->slist = curl_slist_append(NULL, "Accept: application/json");
 
     pthread_mutex_lock(&curl_global_mutex);
@@ -465,24 +486,6 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
   }
 
   return rb_mse;
-}
-
-CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpwd)
-{
-  return curl_easy_setopt(rb_mse->hnd, CURLOPT_USERPWD, userpwd);;
-}
-
-
-CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
-{
-  const size_t url_size = sizeof("https://")  + strlen(addr) + sizeof(mse_api_call_url);
-  rb_mse->url = malloc(sizeof(char)*url_size);
-  if(rb_mse->url){
-    snprintf(rb_mse->url,url_size,"https://%s%s",addr,mse_api_call_url);
-    return CURLE_OK;
-  }else{
-    return CURLE_OUT_OF_MEMORY;
-  }
 }
 
 int rb_mse_isempty(const struct rb_mse_api *rb_mse)
