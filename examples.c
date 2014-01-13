@@ -3,6 +3,7 @@
 #include "rb_mse_api.h"
 
 #include <assert.h>
+#include <unistd.h>
 
 void printUsage(char *argv0)
 {
@@ -16,14 +17,12 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new(15);
+	struct rb_mse_api * rb_mse = rb_mse_api_new(15,argv[1],argv[2]);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
 
 	const struct rb_mse_api_pos * position=NULL;
-	rb_mse_set_addr(rb_mse, argv[1]);
-	rb_mse_set_userpwd(rb_mse, argv[2]);
 
 	CURLcode retCode = CURLE_OK; // rb_mse_update_macs_pos(rb_mse);
 	if(retCode == CURLE_OK)
