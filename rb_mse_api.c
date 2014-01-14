@@ -294,111 +294,108 @@ static CURLcode rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
 {
   assert(rb_mse);
 
-  CURLcode ret = curl_easy_setopt(rb_mse->hnd, CURLOPT_URL, rb_mse->url);
+  CURLcode ret = CURLE_OK;
+  ret = curl_easy_perform(rb_mse->hnd);
   if(ret==CURLE_OK)
   {
-    ret = curl_easy_perform(rb_mse->hnd);
-    if(ret==CURLE_OK)
+    json_error_t error;
+    const char * text = strbuffer_value(&rb_mse->buffer);
+    rb_mse->root = json_loads(text, 0, &error);
+    if(rb_mse->root)
     {
-      json_error_t error;
-      const char * text = strbuffer_value(&rb_mse->buffer);
-      rb_mse->root = json_loads(text, 0, &error);
-      if(rb_mse->root)
+      json_t * locations = json_object_get(rb_mse->root, "Locations");
+      if(locations)
       {
-        json_t * locations = json_object_get(rb_mse->root, "Locations");
-        if(locations)
+        json_t * entries = json_object_get(locations, "entries");
+        if(entries)
         {
-          json_t * entries = json_object_get(locations, "entries");
-          if(entries)
+          if(json_is_array(entries))
           {
-            if(json_is_array(entries))
+            rd_rwlock_wrlock(&rb_mse->avl_memctx_rwlock);
+
+            if(!rb_mse_isempty(rb_mse))
             {
-              rd_rwlock_wrlock(&rb_mse->avl_memctx_rwlock);
+              rb_mse_clean(rb_mse);
+            }
+            unsigned int i;
+            for(i = 0; ret == CURLE_OK && i < json_array_size(entries); i++)
+            {
+              json_t *element= json_array_get(entries, i);
+              if(element && json_is_object(element))
+              {
+                const char * macAddress=NULL;
+                json_t * json_mapHierarchyString = NULL;
+                const char * mapHierarchyString=NULL;
+                json_t * json_macAddress = json_object_get(element,"macAddress");
 
-              if(!rb_mse_isempty(rb_mse))
-              {
-                rb_mse_clean(rb_mse);
-              }
-              unsigned int i;
-              for(i = 0; ret == CURLE_OK && i < json_array_size(entries); i++)
-              {
-                json_t *element= json_array_get(entries, i);
-                if(element && json_is_object(element))
+                if(json_is_string(json_macAddress))
                 {
-                  const char * macAddress=NULL;
-                  json_t * json_mapHierarchyString = NULL;
-                  const char * mapHierarchyString=NULL;
-                  json_t * json_macAddress = json_object_get(element,"macAddress");
-
-                  if(json_is_string(json_macAddress))
-                  {
-                    macAddress = json_string_value(json_macAddress);
-                  }
-                  else
-                  {
-                    ret = -5;
-                  }
-
-                  if(NULL!=macAddress)
-                  {
-                    json_t * mapInfo = json_object_get(element,"MapInfo");
-                    if(mapInfo && json_is_object(mapInfo))
-                    {
-                      json_mapHierarchyString = json_object_get(mapInfo,"mapHierarchyString");
-                      if(json_mapHierarchyString && json_is_string(json_mapHierarchyString))
-                      {
-                        mapHierarchyString = json_string_value(json_mapHierarchyString);
-                      }
-                      else
-                      {
-                        ret = -6;
-                      }
-                    }
-                    else
-                    {
-                      ret = -7;
-                    }
-                  }
-
-                  if(NULL!=macAddress && NULL!=mapHierarchyString)
-                  {
-                    struct mse_positions_list_node * node = rd_memctx_calloc(&rb_mse->memctx,1,sizeof(*node));
-                    node->position = rd_memctx_calloc(&rb_mse->memctx,1,sizeof(*node->position));
-                    #ifdef MSE_POSITION_LIST_MAGIC
-                    node->magic = MSE_POSITION_LIST_MAGIC;
-                    #endif
-                    node->mac =  mac_from_str(macAddress);
-                    //printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
-                    
-                    char * map_string = rd_memctx_strdup(&rb_mse->memctx,mapHierarchyString); // Will free() with pos
-                    char * aux;
-                    node->position->zone  = strtok_r(map_string,">",&aux);
-                    node->position->build = strtok_r(NULL      ,">",&aux);
-                    node->position->floor = strtok_r(NULL      ,">",&aux);
-
-                    //printf("Inserting node\n");
-                    RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
-                  }
+                  macAddress = json_string_value(json_macAddress);
                 }
                 else
                 {
-                  ret = -4;
+                  ret = -5;
                 }
-              } /* for */
-              rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
-            }
-            else
-            {
-              ret = -3;
-            }
+
+                if(NULL!=macAddress)
+                {
+                  json_t * mapInfo = json_object_get(element,"MapInfo");
+                  if(mapInfo && json_is_object(mapInfo))
+                  {
+                    json_mapHierarchyString = json_object_get(mapInfo,"mapHierarchyString");
+                    if(json_mapHierarchyString && json_is_string(json_mapHierarchyString))
+                    {
+                      mapHierarchyString = json_string_value(json_mapHierarchyString);
+                    }
+                    else
+                    {
+                      ret = -6;
+                    }
+                  }
+                  else
+                  {
+                    ret = -7;
+                  }
+                }
+
+                if(NULL!=macAddress && NULL!=mapHierarchyString)
+                {
+                  struct mse_positions_list_node * node = rd_memctx_calloc(&rb_mse->memctx,1,sizeof(*node));
+                  node->position = rd_memctx_calloc(&rb_mse->memctx,1,sizeof(*node->position));
+                  #ifdef MSE_POSITION_LIST_MAGIC
+                  node->magic = MSE_POSITION_LIST_MAGIC;
+                  #endif
+                  node->mac =  mac_from_str(macAddress);
+                  //printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
+                  
+                  char * map_string = rd_memctx_strdup(&rb_mse->memctx,mapHierarchyString); // Will free() with pos
+                  char * aux;
+                  node->position->zone  = strtok_r(map_string,">",&aux);
+                  node->position->build = strtok_r(NULL      ,">",&aux);
+                  node->position->floor = strtok_r(NULL      ,">",&aux);
+
+                  //printf("Inserting node\n");
+                  RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
+                }
+              }
+              else
+              {
+                ret = -4;
+              }
+            } /* for */
+            rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
+          }
+          else
+          {
+            ret = -3;
           }
         }
-        // json_decref(rb_mse->root); //Don't! it will be decref in clean().
       }
-      else
-      {
-        ret = -2;
-      }
+      // json_decref(rb_mse->root); //Don't! it will be decref in clean().
+    }
+    else
+    {
+      ret = -2;
     }
   }
 
@@ -432,7 +429,7 @@ static CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
   rb_mse->url = malloc(sizeof(char)*url_size);
   if(rb_mse->url){
     snprintf(rb_mse->url,url_size,"https://%s%s",addr,mse_api_call_url);
-    return CURLE_OK;
+    return curl_easy_setopt(rb_mse->hnd, CURLOPT_URL, rb_mse->url);;
   }else{
     return CURLE_OUT_OF_MEMORY;
   }
@@ -445,9 +442,6 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
   struct rb_mse_api * rb_mse = calloc(1,sizeof(struct rb_mse_api));
   if(rb_mse)
   {
-    rb_mse_set_userpwd(rb_mse, userpwd);
-    rb_mse_set_addr(rb_mse, addr);
-
     rb_mse->slist = curl_slist_append(NULL, "Accept: application/json");
 
     pthread_mutex_lock(&curl_global_mutex);
@@ -457,12 +451,12 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
     rb_mse->hnd = curl_easy_init();
     if(rb_mse->hnd)
     {
+      rb_mse_set_addr(rb_mse, addr);
+      rb_mse_set_userpwd(rb_mse, userpwd);
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEDATA, rb_mse);               /* void passed to WRITEFUNCTION */
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEFUNCTION, write_function);   /* function called for each data received */ 
       curl_easy_setopt(rb_mse->hnd, CURLOPT_HTTPHEADER, rb_mse->slist);
       curl_setopts(rb_mse->hnd);
-      rb_mse_set_addr(rb_mse, addr);
-      rb_mse_set_userpwd(rb_mse, userpwd);
     }
     else // curl_easy_init error
     {
