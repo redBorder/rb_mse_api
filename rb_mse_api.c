@@ -350,11 +350,9 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
   }
 }
 
-static CURLcode rb_mse_get_mse_response(struct rb_mse_api *rb_mse, bool currently_tracked, int page, bool *more_pages)
+static CURLcode rb_mse_set_curl_url(struct rb_mse_api *rb_mse, bool currently_tracked, int page)
 {
   CURLcode ret;
-  if(more_pages)
-    *more_pages = false;
   if(rb_mse->mse_url)
   {
     const char * url_ts = rd_tsprintf("https://%s/%s?currentlyTracked=%s&page=%d",
@@ -435,12 +433,17 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
 
   while(more_pages)
   {
-    rb_mse_get_mse_response(rb_mse,false,current_page,&more_pages);
+    rb_mse_set_curl_url(rb_mse,false,current_page);
     const CURLcode ret = curl_easy_perform(rb_mse->hnd);
     if(ret==CURLE_OK)
+    {
       process_mse_response(rb_mse);
+      more_pages = false;
+    }
     else
+    {
       rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
+    }
   }
 
   rb_mse->nontracked_response = strbuffer_steal_value(&rb_mse->buffer);
@@ -450,12 +453,17 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
   more_pages=true;
   while(more_pages)
   {
-    rb_mse_get_mse_response(rb_mse,true,current_page,&more_pages);
+    rb_mse_set_curl_url(rb_mse,true,current_page);
     const CURLcode ret = curl_easy_perform(rb_mse->hnd);
     if(ret==CURLE_OK)
+    {
       process_mse_response(rb_mse);
+      more_pages = false;
+    }
     else
+    {
       rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
+    }
   }
 
   rb_mse->tracked_response = strbuffer_steal_value(&rb_mse->buffer);
