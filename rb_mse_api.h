@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include "curl/curl.h"
 
+#include "librd/rdlog.h"
+
 /// Struct that holds the position of the MAC
 struct rb_mse_api_pos;
 
@@ -54,6 +56,9 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const
 const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uint64_t mac);
 
 int rb_mse_isempty(const struct rb_mse_api * rb_mse);
+
+
+#define rb_mse_debug_set(rb_mse,onoff) rd_dbg_set (onoff)
 
 
 /* call curl_easy_setopt in rb_mse_api */

@@ -22,6 +22,8 @@ int main(int argc,char *argv[]){
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
 
+	rb_mse_debug_set(rb_mse,1);
+
 	const struct rb_mse_api_pos * position=NULL;
 
 	CURLcode retCode = CURLE_OK; // rb_mse_update_macs_pos(rb_mse);
