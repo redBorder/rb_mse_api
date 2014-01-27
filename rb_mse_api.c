@@ -20,7 +20,7 @@ static pthread_mutex_t curl_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static inline uint64_t mac_from_str(const char *mac)
 {
-  uint64_t one,two,three,four,five,six;
+  uint64_t one=0,two=0,three=0,four=0,five=0,six=0;
   sscanf(mac,"%lx:%lx:%lx:%lx:%lx:%lx",&one,&two,&three,&four,&five,&six);
   return (((((((((one<<8)+two)<<8)+three)<<8)+four)<<8)+five)<<8)+six;
 }
@@ -110,7 +110,6 @@ struct rb_mse_api
   rd_thread_t * rdt;
   /// Curl handler.
   CURL *hnd;
-  char * url;
   char * mse_url;
   char * userpwd;
 
@@ -130,6 +129,8 @@ struct rb_mse_api
   json_error_t error;
 
   // responses
+  json_t * tracked_root;
+  json_t * nontracked_root;
   char * tracked_response;
   char * nontracked_response;
 };
@@ -243,9 +244,10 @@ static void rb_mse_clean(struct rb_mse_api * rb_mse)
   strbuffer_close(&rb_mse->buffer);
   free(rb_mse->tracked_response);
   free(rb_mse->nontracked_response);
-  json_decref(rb_mse->root);
+  json_decref(rb_mse->tracked_root);
+  json_decref(rb_mse->nontracked_root);
   rd_memctx_freeall(&rb_mse->memctx);
-  rd_memctx_destroy(&rb_mse->memctx);
+  // rd_memctx_destroy(&rb_mse->memctx);
   rd_avl_destroy(rb_mse->avl);
   rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
@@ -322,8 +324,10 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
                 char * map_string = rd_memctx_strdup(&rb_mse->memctx,mapHierarchyString); // Will free() with pos
                 char * aux;
                 node->position->zone  = strtok_r(map_string,">",&aux);
-                node->position->build = strtok_r(NULL      ,">",&aux);
-                node->position->floor = strtok_r(NULL      ,">",&aux);
+                if(node->position->zone)
+                  node->position->build = strtok_r(NULL,">",&aux);
+                if(node->position->build)
+                  node->position->floor = strtok_r(NULL,">",&aux);
 
                 // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
                 RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
@@ -373,6 +377,41 @@ static CURLcode rb_mse_set_curl_url(struct rb_mse_api *rb_mse, bool currently_tr
   rd_string_thread_cleanup();
   return ret;
 }
+
+static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked, char **response, json_t **response_root)
+{
+  bool more_pages = true;
+  int current_page = 0;
+
+  while(more_pages)
+  {
+    rb_mse_set_curl_url(rb_mse,currently_tracked,current_page);
+    const CURLcode ret = curl_easy_perform(rb_mse->hnd);
+    if(ret==CURLE_OK)
+    {
+      process_mse_response(rb_mse);
+      more_pages = false;
+    }
+    else
+    {
+      rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
+    }
+  }
+
+  //rb_mse->nontracked_response = strbuffer_steal_value(&rb_mse->buffer);
+  *response = strbuffer_steal_value(&rb_mse->buffer);
+  strbuffer_close(&rb_mse->buffer);
+  strbuffer_init(&rb_mse->buffer);
+
+  *response_root = rb_mse->root;
+  rb_mse->root=NULL;
+}
+
+#define get_and_process_mse_tracked(rb_mse,to_save_response,to_save_json_root) \
+  get_and_process_mse_response0(rb_mse, true, to_save_response, to_save_json_root)
+
+#define get_and_process_mse_nontracked(rb_mse,to_save_response, to_save_json_root) \
+  get_and_process_mse_response0(rb_mse, false, to_save_response,to_save_json_root)
 
 /**
   Update all macs pos in the MSE
@@ -428,46 +467,11 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
 {
   assert(rb_mse);
   rb_mse_clean(rb_mse);
-  bool more_pages = true;
-  int current_page = 0;
 
-  while(more_pages)
-  {
-    rb_mse_set_curl_url(rb_mse,false,current_page);
-    const CURLcode ret = curl_easy_perform(rb_mse->hnd);
-    if(ret==CURLE_OK)
-    {
-      process_mse_response(rb_mse);
-      more_pages = false;
-    }
-    else
-    {
-      rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
-    }
-  }
+  get_and_process_mse_nontracked(rb_mse,&rb_mse->nontracked_response,&rb_mse->tracked_root);
 
-  rb_mse->nontracked_response = strbuffer_steal_value(&rb_mse->buffer);
-  strbuffer_close(&rb_mse->buffer);
-  strbuffer_init(&rb_mse->buffer);
-
-  more_pages=true;
-  while(more_pages)
-  {
-    rb_mse_set_curl_url(rb_mse,true,current_page);
-    const CURLcode ret = curl_easy_perform(rb_mse->hnd);
-    if(ret==CURLE_OK)
-    {
-      process_mse_response(rb_mse);
-      more_pages = false;
-    }
-    else
-    {
-      rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
-    }
-  }
-
-  rb_mse->tracked_response = strbuffer_steal_value(&rb_mse->buffer);
-  strbuffer_close(&rb_mse->buffer);
+  // Note: If we found the same mac, tracked value will overwrite nontracked value
+  get_and_process_mse_tracked(rb_mse,&rb_mse->tracked_response,&rb_mse->nontracked_root);
 
   rdbg("Updated");
 }
@@ -576,8 +580,9 @@ void rb_mse_api_destroy(struct rb_mse_api * rb_mse)
   void * void_val;
   rd_thread_kill_join(rb_mse->rdt,&void_val);
   rb_mse_clean(rb_mse);
+  rd_avl_destroy(rb_mse->avl);
   curl_slist_free_all(rb_mse->slist); /* free the list again */
-  free(rb_mse->url);
+  free(rb_mse->mse_url);
   curl_easy_cleanup(rb_mse->hnd);
   free(rb_mse);
 
