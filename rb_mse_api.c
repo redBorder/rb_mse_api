@@ -5,14 +5,16 @@
 
 #include "librd/rdmem.h"
 #include "librd/rdavl.h"
+#include "librd/rdstring.h"
 #include "librd/rdlog.h"
 #include "jansson.h"
 #include "strbuffer.h"
 
 #include "stdlib.h"
 #include "string.h"
+#include "stdbool.h"
 
-static const char mse_api_call_url[] = "/api/contextaware/v1/location/clients/";
+static const char mse_api_call_url[] = "api/contextaware/v1/location/clients";
 
 static pthread_mutex_t curl_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -109,6 +111,7 @@ struct rb_mse_api
   /// Curl handler.
   CURL *hnd;
   char * url;
+  char * mse_url;
   char * userpwd;
 
   /// Message lists queue.
@@ -120,10 +123,15 @@ struct rb_mse_api
   time_t update_time;
   json_t *root;
 
-  rd_avl_t * avl;
+  rd_avl_t *avl;
+  rd_avl_t *nontracked_avl;
   rd_memctx_t memctx;
   
   json_error_t error;
+
+  // responses
+  char * tracked_response;
+  char * nontracked_response;
 };
 
 /*
@@ -232,7 +240,9 @@ static void *rb_mse_autoupdate(void *rb_mse); /* FW declaration */
 /* Note: this function assumes rb_mse->avl_memctx_rwlock is locked */
 static void rb_mse_clean(struct rb_mse_api * rb_mse)
 {
-  strbuffer_clear(&rb_mse->buffer);
+  strbuffer_close(&rb_mse->buffer);
+  free(rb_mse->tracked_response);
+  free(rb_mse->nontracked_response);
   json_decref(rb_mse->root);
   rd_memctx_freeall(&rb_mse->memctx);
   rd_memctx_destroy(&rb_mse->memctx);
@@ -315,7 +325,7 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
                 node->position->build = strtok_r(NULL      ,">",&aux);
                 node->position->floor = strtok_r(NULL      ,">",&aux);
 
-                //printf("Inserting node\n");
+                // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
                 RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
               }
             }
@@ -338,6 +348,32 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
   {
     rdbg("Could not get root node");
   }
+}
+
+static CURLcode rb_mse_get_mse_response(struct rb_mse_api *rb_mse, bool currently_tracked, int page, bool *more_pages)
+{
+  CURLcode ret;
+  if(more_pages)
+    *more_pages = false;
+  if(rb_mse->mse_url)
+  {
+    const char * url_ts = rd_tsprintf("https://%s/%s?currentlyTracked=%s&page=%d",
+      rb_mse->mse_url,mse_api_call_url,currently_tracked?"true":"false",page);
+    rdbg("Url generated: %s",url_ts);
+    if(url_ts){
+      ret =  curl_easy_setopt(rb_mse->hnd, CURLOPT_URL, url_ts);
+    }else{
+      ret = CURLE_OUT_OF_MEMORY;
+    }
+  }
+  else
+  {
+    ret = CURLE_BAD_FUNCTION_ARGUMENT;
+    rdbg("MSE URL was not setted");
+  }
+
+  rd_string_thread_cleanup();
+  return ret;
 }
 
 /**
@@ -394,17 +430,44 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
 {
   assert(rb_mse);
   rb_mse_clean(rb_mse);
+  bool more_pages = true;
+  int current_page = 0;
 
-  const CURLcode ret = curl_easy_perform(rb_mse->hnd);
-  if(ret==CURLE_OK)
-    process_mse_response(rb_mse);
-  else
-    rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
+  while(more_pages)
+  {
+    rb_mse_get_mse_response(rb_mse,false,current_page,&more_pages);
+    const CURLcode ret = curl_easy_perform(rb_mse->hnd);
+    if(ret==CURLE_OK)
+      process_mse_response(rb_mse);
+    else
+      rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
+  }
+
+  rb_mse->nontracked_response = strbuffer_steal_value(&rb_mse->buffer);
+  strbuffer_close(&rb_mse->buffer);
+  strbuffer_init(&rb_mse->buffer);
+
+  more_pages=true;
+  while(more_pages)
+  {
+    rb_mse_get_mse_response(rb_mse,true,current_page,&more_pages);
+    const CURLcode ret = curl_easy_perform(rb_mse->hnd);
+    if(ret==CURLE_OK)
+      process_mse_response(rb_mse);
+    else
+      rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
+  }
+
+  rb_mse->tracked_response = strbuffer_steal_value(&rb_mse->buffer);
+  strbuffer_close(&rb_mse->buffer);
+
+  rdbg("Updated");
 }
 
 
 static void *rb_mse_autoupdate(void *_rb_mse)
 {
+  assert(_rb_mse);
   struct rb_mse_api * rb_mse = _rb_mse;
   while(rd_currthread_get()->rdt_state != RD_THREAD_S_EXITING)
   {
@@ -423,16 +486,10 @@ static CURLcode rb_mse_set_userpwd(struct rb_mse_api *rb_mse, const char *userpw
 }
 
 
-static CURLcode rb_mse_set_addr(struct rb_mse_api *rb_mse, const char * addr)
+static bool rb_mse_set_mse_addr(struct rb_mse_api *rb_mse, const char *addr)
 {
-  const size_t url_size = sizeof("https://")  + strlen(addr) + sizeof(mse_api_call_url);
-  rb_mse->url = malloc(sizeof(char)*url_size);
-  if(rb_mse->url){
-    snprintf(rb_mse->url,url_size,"https://%s%s",addr,mse_api_call_url);
-    return curl_easy_setopt(rb_mse->hnd, CURLOPT_URL, rb_mse->url);;
-  }else{
-    return CURLE_OUT_OF_MEMORY;
-  }
+  rb_mse->mse_url = strdup(addr);
+  return rb_mse->mse_url != NULL;
 }
 
 /* Public API */
@@ -451,7 +508,7 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
     rb_mse->hnd = curl_easy_init();
     if(rb_mse->hnd)
     {
-      rb_mse_set_addr(rb_mse, addr);
+      rb_mse_set_mse_addr(rb_mse, addr);
       rb_mse_set_userpwd(rb_mse, userpwd);
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEDATA, rb_mse);               /* void passed to WRITEFUNCTION */
       curl_easy_setopt(rb_mse->hnd, CURLOPT_WRITEFUNCTION, write_function);   /* function called for each data received */ 

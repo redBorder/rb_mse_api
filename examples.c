@@ -30,7 +30,7 @@ int main(int argc,char *argv[]){
 	if(retCode == CURLE_OK)
 	{
 		printf("Sleeping until mac_position filled\n");
-		sleep(5);
+		sleep(15);
 		position = rb_mse_req_for_mac(rb_mse,argv[3]);
 		if(position)
 		{
