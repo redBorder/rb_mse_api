@@ -10,9 +10,10 @@
 #include "jansson.h"
 #include "strbuffer.h"
 
-#include "stdlib.h"
-#include "string.h"
-#include "stdbool.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <sys/queue.h>
 
 static const char mse_api_call_url[] = "api/contextaware/v1/location/clients";
 
@@ -31,11 +32,8 @@ static inline uint64_t mac_from_str(const char *mac)
  * ============================================================ */
  
 struct rb_mse_api_pos{
-  /// position in string_tofree that holds the mac's floor
   const char * floor;
-  /// position in string_tofree that holds the mac's build
   const char * build;
-  /// position in string_tofree that holds the mac's zone
   const char * zone;
 };
 
@@ -65,9 +63,6 @@ struct mse_positions_list_node{
   rd_avl_node_t rd_avl_node;
 };
 
-//typedef rd_avl_t mse_positions_avl;
-//typedef TAILQ_HEAD(,mse_positions_list_node) mse_positions_list;
-
 struct rb_mse_api_pos * mse_position(struct mse_positions_list_node *node)
 {
   return node->position;
@@ -87,21 +82,13 @@ int mse_positions_cmp(const void *_node1,const void *_node2)
 }
 
 
-
-
 /* ======================================================================= *
  *                     mse_api structs definitions
  * ======================================================================= */
 
-struct message_tailq_node{
-  /// Message stored in the node
-  char * msg;
-
-  /// string of the message
-  size_t size,nmemb;
-
-  /// STAILQ entry
-  STAILQ_ENTRY(message_tailq_node) next;
+struct json_root_node{
+  json_t * root;
+  SLIST_ENTRY(json_root_node) next;
 };
 
 struct rb_mse_api
@@ -123,16 +110,12 @@ struct rb_mse_api
   json_t *root;
 
   rd_avl_t *avl;
-  rd_avl_t *nontracked_avl;
   rd_memctx_t memctx;
   
   json_error_t error;
 
   // responses
-  json_t * tracked_root;
-  json_t * nontracked_root;
-  char * tracked_response;
-  char * nontracked_response;
+  SLIST_HEAD(,json_root_node) json_root_list;
 };
 
 /*
@@ -242,10 +225,14 @@ static void *rb_mse_autoupdate(void *rb_mse); /* FW declaration */
 static void rb_mse_clean(struct rb_mse_api * rb_mse)
 {
   strbuffer_close(&rb_mse->buffer);
-  free(rb_mse->tracked_response);
-  free(rb_mse->nontracked_response);
-  json_decref(rb_mse->tracked_root);
-  json_decref(rb_mse->nontracked_root);
+  while(!SLIST_EMPTY(&rb_mse->json_root_list))
+  {
+    struct json_root_node *json_node = SLIST_FIRST(&rb_mse->json_root_list);
+    SLIST_REMOVE_HEAD(&rb_mse->json_root_list,next);
+
+    json_decref(json_node->root);
+    free(json_node);
+  }
   rd_memctx_freeall(&rb_mse->memctx);
   // rd_memctx_destroy(&rb_mse->memctx);
   rd_avl_destroy(rb_mse->avl);
@@ -302,7 +289,7 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
                   }
                   else
                   {
-                    rdbg("Could not locate \"mapHierarchyString\" element (pos: %d)",i);
+                    // rdbg("Could not locate \"mapHierarchyString\" element (pos: %d)",i);
                   }
                 }
                 else
@@ -378,7 +365,7 @@ static CURLcode rb_mse_set_curl_url(struct rb_mse_api *rb_mse, bool currently_tr
   return ret;
 }
 
-static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked, char **response, json_t **response_root)
+static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked)
 {
   bool more_pages = true;
   int current_page = 0;
@@ -398,20 +385,20 @@ static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool curren
     }
   }
 
-  //rb_mse->nontracked_response = strbuffer_steal_value(&rb_mse->buffer);
-  *response = strbuffer_steal_value(&rb_mse->buffer);
   strbuffer_close(&rb_mse->buffer);
   strbuffer_init(&rb_mse->buffer);
 
-  *response_root = rb_mse->root;
-  rb_mse->root=NULL;
+  struct json_root_node * json_root_node = calloc(1,sizeof(*json_root_node));
+  json_root_node->root = rb_mse->root;
+  rb_mse->root = NULL;
+  SLIST_INSERT_HEAD(&rb_mse->json_root_list, json_root_node, next);
 }
 
-#define get_and_process_mse_tracked(rb_mse,to_save_response,to_save_json_root) \
-  get_and_process_mse_response0(rb_mse, true, to_save_response, to_save_json_root)
+#define get_and_process_mse_tracked(rb_mse) \
+  get_and_process_mse_response0(rb_mse, true)
 
-#define get_and_process_mse_nontracked(rb_mse,to_save_response, to_save_json_root) \
-  get_and_process_mse_response0(rb_mse, false, to_save_response,to_save_json_root)
+#define get_and_process_mse_nontracked(rb_mse) \
+  get_and_process_mse_response0(rb_mse, false)
 
 /**
   Update all macs pos in the MSE
@@ -468,10 +455,10 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
   assert(rb_mse);
   rb_mse_clean(rb_mse);
 
-  get_and_process_mse_nontracked(rb_mse,&rb_mse->nontracked_response,&rb_mse->tracked_root);
+  get_and_process_mse_nontracked(rb_mse);
 
   // Note: If we found the same mac, tracked value will overwrite nontracked value
-  get_and_process_mse_tracked(rb_mse,&rb_mse->tracked_response,&rb_mse->nontracked_root);
+  get_and_process_mse_tracked(rb_mse);
 
   rdbg("Updated");
 }
@@ -542,6 +529,8 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
       rd_rwlock_init(&rb_mse->avl_memctx_rwlock);
       rb_mse->update_time = update_time;
       rd_thread_create(&rb_mse->rdt,"MSE updater",0,rb_mse_autoupdate,rb_mse);
+
+      SLIST_INIT(&rb_mse->json_root_list);
     }
   }
 
