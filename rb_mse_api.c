@@ -86,11 +86,6 @@ int mse_positions_cmp(const void *_node1,const void *_node2)
  *                     mse_api structs definitions
  * ======================================================================= */
 
-struct json_root_node{
-  json_t * root;
-  SLIST_ENTRY(json_root_node) next;
-};
-
 struct rb_mse_api
 {
   // MSE update thread.
@@ -113,9 +108,6 @@ struct rb_mse_api
   rd_memctx_t memctx;
   
   json_error_t error;
-
-  // responses
-  SLIST_HEAD(,json_root_node) json_root_list;
 };
 
 /*
@@ -225,14 +217,6 @@ static void *rb_mse_autoupdate(void *rb_mse); /* FW declaration */
 static void rb_mse_clean(struct rb_mse_api * rb_mse)
 {
   strbuffer_close(&rb_mse->buffer);
-  while(!SLIST_EMPTY(&rb_mse->json_root_list))
-  {
-    struct json_root_node *json_node = SLIST_FIRST(&rb_mse->json_root_list);
-    SLIST_REMOVE_HEAD(&rb_mse->json_root_list,next);
-
-    json_decref(json_node->root);
-    free(json_node);
-  }
   rd_memctx_freeall(&rb_mse->memctx);
   // rd_memctx_destroy(&rb_mse->memctx);
   rd_avl_destroy(rb_mse->avl);
@@ -388,10 +372,8 @@ static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool curren
   strbuffer_close(&rb_mse->buffer);
   strbuffer_init(&rb_mse->buffer);
 
-  struct json_root_node * json_root_node = calloc(1,sizeof(*json_root_node));
-  json_root_node->root = rb_mse->root;
+  json_decref(rb_mse->root);
   rb_mse->root = NULL;
-  SLIST_INSERT_HEAD(&rb_mse->json_root_list, json_root_node, next);
 }
 
 #define get_and_process_mse_tracked(rb_mse) \
@@ -530,7 +512,6 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
       rb_mse->update_time = update_time;
       rd_thread_create(&rb_mse->rdt,"MSE updater",0,rb_mse_autoupdate,rb_mse);
 
-      SLIST_INIT(&rb_mse->json_root_list);
     }
   }
 

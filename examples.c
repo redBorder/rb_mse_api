@@ -17,7 +17,7 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new(300, argv[1], argv[2]);
+	struct rb_mse_api * rb_mse = rb_mse_api_new(30, argv[1], argv[2]);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
