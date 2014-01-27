@@ -17,7 +17,7 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new(30, argv[1], argv[2]);
+	struct rb_mse_api * rb_mse = rb_mse_api_new(10, argv[1], argv[2]);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
@@ -30,7 +30,8 @@ int main(int argc,char *argv[]){
 	if(retCode == CURLE_OK)
 	{
 		printf("Sleeping until mac_position filled\n");
-		sleep(15);
+		sleep(300);
+		printf("Time to ask\n");
 		position = rb_mse_req_for_mac(rb_mse,argv[3]);
 		if(position)
 		{
@@ -48,7 +49,7 @@ int main(int argc,char *argv[]){
 		fprintf(stderr,"There was an error updating MAC positions: %s",curl_easy_strerror(retCode));
 	}
 
-	sleep(60); // Wating for auto-update. 
+	// sleep(600); // Wating for auto-update. 
 
 	rb_mse_api_destroy(rb_mse);
 

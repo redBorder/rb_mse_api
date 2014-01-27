@@ -223,8 +223,6 @@ static void rb_mse_clean(struct rb_mse_api * rb_mse)
   rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
-
-
 static void process_mse_response(struct rb_mse_api *rb_mse)
 {
   json_error_t error;
@@ -317,7 +315,6 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
         }
       }
     }
-    // json_decref(rb_mse->root); //Don't! it will be decref in clean().
   }
   else
   {
@@ -349,31 +346,40 @@ static CURLcode rb_mse_set_curl_url(struct rb_mse_api *rb_mse, bool currently_tr
   return ret;
 }
 
+static bool has_more_pages(struct rb_mse_api *rb_mse)
+{
+  const json_t * locations = json_object_get(rb_mse->root, "Locations");
+  if(locations)
+    return NULL!=json_object_get(locations,"nextResourceURI");
+  else
+    rdbg("Cannot get locations");
+  return false;
+}
+
 static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked)
 {
   bool more_pages = true;
   int current_page = 0;
 
-  while(more_pages)
+  while(more_pages && current_page)
   {
     rb_mse_set_curl_url(rb_mse,currently_tracked,current_page);
     const CURLcode ret = curl_easy_perform(rb_mse->hnd);
     if(ret==CURLE_OK)
     {
       process_mse_response(rb_mse);
-      more_pages = false;
+      more_pages = has_more_pages(rb_mse);
+      current_page++;
+      json_decref(rb_mse->root);
+      rb_mse->root = NULL;
+      strbuffer_close(&rb_mse->buffer);
+      strbuffer_init(&rb_mse->buffer);
     }
     else
     {
       rdbg("Cannot perform curl request: %s\n",curl_easy_strerror(ret));
     }
   }
-
-  strbuffer_close(&rb_mse->buffer);
-  strbuffer_init(&rb_mse->buffer);
-
-  json_decref(rb_mse->root);
-  rb_mse->root = NULL;
 }
 
 #define get_and_process_mse_tracked(rb_mse) \
