@@ -102,10 +102,9 @@ struct rb_mse_api
   /// MACs positions avl
   rd_rwlock_t avl_memctx_rwlock;
   time_t update_time;
-  json_t *root;
 
   rd_avl_t *avl;
-  rd_memctx_t memctx;
+  rd_memctx_t *memctx;
   
   json_error_t error;
 };
@@ -217,28 +216,28 @@ static void *rb_mse_autoupdate(void *rb_mse); /* FW declaration */
 static void rb_mse_clean(struct rb_mse_api * rb_mse)
 {
   strbuffer_close(&rb_mse->buffer);
-  rd_memctx_freeall(&rb_mse->memctx);
+  rd_memctx_freeall(rb_mse->memctx);
   // rd_memctx_destroy(&rb_mse->memctx);
   rd_avl_destroy(rb_mse->avl);
   rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
-static void process_mse_response(struct rb_mse_api *rb_mse)
+static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *memctx,json_t **root)
 {
+  assert(root);
   json_error_t error;
-  const char * text = strbuffer_value(&rb_mse->buffer);
-  rb_mse->root = json_loads(text, 0, &error);
-  if(rb_mse->root)
+  const char * text = strbuffer_value(buffer);
+  *root = json_loads(text, 0, &error);
+  if(root)
   {
-    json_t * locations = json_object_get(rb_mse->root, "Locations");
+    json_t *locations = json_object_get(*root, "Locations");
     if(locations)
     {
-      json_t * entries = json_object_get(locations, "entries");
+      json_t *entries = json_object_get(locations, "entries");
       if(entries)
       {
         if(json_is_array(entries))
         {
-          rd_rwlock_wrlock(&rb_mse->avl_memctx_rwlock);
           unsigned int i;
           for(i = 0; i < json_array_size(entries); i++)
           {
@@ -282,15 +281,15 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
 
               if(NULL!=macAddress && NULL!=mapHierarchyString)
               {
-                struct mse_positions_list_node * node = rd_memctx_calloc(&rb_mse->memctx,1,sizeof(*node));
-                node->position = rd_memctx_calloc(&rb_mse->memctx,1,sizeof(*node->position));
+                struct mse_positions_list_node * node = rd_memctx_calloc(memctx,1,sizeof(*node));
+                node->position = rd_memctx_calloc(memctx,1,sizeof(*node->position));
                 #ifdef MSE_POSITION_LIST_MAGIC
                 node->magic = MSE_POSITION_LIST_MAGIC;
                 #endif
                 node->mac =  mac_from_str(macAddress);
-                //printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
+                // printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
                 
-                char * map_string = rd_memctx_strdup(&rb_mse->memctx,mapHierarchyString); // Will free() with pos
+                char * map_string = rd_memctx_strdup(memctx,mapHierarchyString); // Will free() with pos
                 char * aux;
                 node->position->zone  = strtok_r(map_string,">",&aux);
                 if(node->position->zone)
@@ -299,7 +298,7 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
                   node->position->floor = strtok_r(NULL,">",&aux);
 
                 // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
-                RD_AVL_INSERT(rb_mse->avl,node,rd_avl_node);
+                RD_AVL_INSERT(avl,node,rd_avl_node);
               }
             }
             else
@@ -307,7 +306,6 @@ static void process_mse_response(struct rb_mse_api *rb_mse)
               rdbg("Could not get %d element of %s",i, "entries");
             }
           } /* for */
-          rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
         }
         else
         {
@@ -346,9 +344,9 @@ static CURLcode rb_mse_set_curl_url(struct rb_mse_api *rb_mse, bool currently_tr
   return ret;
 }
 
-static bool has_more_pages(struct rb_mse_api *rb_mse)
+static bool has_more_pages(json_t *root)
 {
-  const json_t * locations = json_object_get(rb_mse->root, "Locations");
+  const json_t * locations = json_object_get(root, "Locations");
   if(locations)
     return NULL!=json_object_get(locations,"nextResourceURI");
   else
@@ -356,22 +354,23 @@ static bool has_more_pages(struct rb_mse_api *rb_mse)
   return false;
 }
 
-static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked)
+static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked, rd_avl_t *avl, rd_memctx_t *memctx)
 {
   bool more_pages = true;
   int current_page = 0;
 
-  while(more_pages && current_page)
+  while(more_pages)
   {
     rb_mse_set_curl_url(rb_mse,currently_tracked,current_page);
     const CURLcode ret = curl_easy_perform(rb_mse->hnd);
     if(ret==CURLE_OK)
     {
-      process_mse_response(rb_mse);
-      more_pages = has_more_pages(rb_mse);
+      json_t *root;
+      process_mse_response(&rb_mse->buffer,avl,memctx,&root);
+      more_pages = has_more_pages(root);
       current_page++;
-      json_decref(rb_mse->root);
-      rb_mse->root = NULL;
+      json_decref(root);
+      root = NULL;
       strbuffer_close(&rb_mse->buffer);
       strbuffer_init(&rb_mse->buffer);
     }
@@ -382,11 +381,11 @@ static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool curren
   }
 }
 
-#define get_and_process_mse_tracked(rb_mse) \
-  get_and_process_mse_response0(rb_mse, true)
+#define get_and_process_mse_tracked(rb_mse,avl,memctx) \
+  get_and_process_mse_response0(rb_mse, true,avl,memctx)
 
-#define get_and_process_mse_nontracked(rb_mse) \
-  get_and_process_mse_response0(rb_mse, false)
+#define get_and_process_mse_nontracked(rb_mse,avl,memctx) \
+  get_and_process_mse_response0(rb_mse, false,avl,memctx)
 
 /**
   Update all macs pos in the MSE
@@ -441,14 +440,26 @@ static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool curren
 static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
 {
   assert(rb_mse);
-  rb_mse_clean(rb_mse);
-
-  get_and_process_mse_nontracked(rb_mse);
-
+  rd_memctx_t *new_memctx = calloc(1,sizeof(rd_memctx_t));
+  rd_memctx_init(new_memctx,NULL,RD_MEMCTX_F_TRACK);
+  rd_avl_t *new_avl = rd_memctx_calloc(new_memctx,1,sizeof(rd_avl_t));
+  rd_avl_init(new_avl,mse_positions_cmp,0);
+  get_and_process_mse_nontracked(rb_mse,new_avl,new_memctx);
   // Note: If we found the same mac, tracked value will overwrite nontracked value
-  get_and_process_mse_tracked(rb_mse);
+  get_and_process_mse_tracked(rb_mse,new_avl,new_memctx);
+
+  rd_rwlock_wrlock(&rb_mse->avl_memctx_rwlock);
+  rd_memctx_t *old_memctx = rb_mse->memctx;
+  rb_mse->memctx = new_memctx;
+  rb_mse->avl = new_avl;
+  rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   rdbg("Updated");
+  if(old_memctx)
+  {
+    rd_memctx_freeall(old_memctx);
+    free(old_memctx);
+  }
 }
 
 
@@ -511,9 +522,6 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
     if(rb_mse)
     {
       strbuffer_init(&rb_mse->buffer);
-      rd_memctx_init (&rb_mse->memctx, "rb_mse", RD_MEMCTX_F_TRACK);
-      rb_mse->avl = rd_avl_init (NULL, mse_positions_cmp,0);
-
       rd_rwlock_init(&rb_mse->avl_memctx_rwlock);
       rb_mse->update_time = update_time;
       rd_thread_create(&rb_mse->rdt,"MSE updater",0,rb_mse_autoupdate,rb_mse);
@@ -526,7 +534,7 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
 
 int rb_mse_isempty(const struct rb_mse_api *rb_mse)
 {
-  return rb_mse->memctx.rmc_out==0;
+  return rb_mse->memctx?rb_mse->memctx->rmc_out==0:true;
 }
 
 
@@ -556,6 +564,7 @@ void rb_mse_api_destroy(struct rb_mse_api * rb_mse)
   void * void_val;
   rd_thread_kill_join(rb_mse->rdt,&void_val);
   rb_mse_clean(rb_mse);
+  free(rb_mse->memctx);
   rd_avl_destroy(rb_mse->avl);
   curl_slist_free_all(rb_mse->slist); /* free the list again */
   free(rb_mse->mse_url);
