@@ -553,7 +553,8 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uin
   };
 
   rd_rwlock_rdlock(&rb_mse->avl_memctx_rwlock);
-  const struct mse_positions_list_node * ret_node=rd_avl_find(rb_mse->avl,&search_node,1 /* rlock */);
+  const struct mse_positions_list_node * ret_node
+    =rb_mse->avl?rd_avl_find(rb_mse->avl,&search_node,1 /* rlock */):NULL;
   rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   return ret_node ? ret_node->position : NULL;
