@@ -25,20 +25,31 @@
 
 #include "librd/rdlog.h"
 
-/// Struct that holds the position of the MAC
-struct rb_mse_api_pos;
-
 struct rb_mse_api;
 
-/** Free an rb_mse_api_pos
-    @param pos rb_mse_api_pos you want to free
-*/
-void rb_mse_pos_destroy(struct rb_mse_api_pos *pos);
+/// Struct that holds the position of the MAC
+/// Private: Do not use it directly.
+struct rb_mse_api_pos{
+  const char * floor;
+  const char * build;
+  const char * zone;
+
+  struct {
+    double lattitude;
+    double longitude;
+    const char * unit;
+  }geo;
+};
 
 
-const char * rb_mse_pos_floor(const struct rb_mse_api_pos *pos);
-const char * rb_mse_pos_build(const struct rb_mse_api_pos *pos);
-const char * rb_mse_pos_zone(const struct rb_mse_api_pos *pos);
+
+#define rb_mse_pos_floor(pos) pos->floor
+#define rb_mse_pos_build(pos) pos->build
+#define rb_mse_pos_zone(pos) pos->zone
+
+#define rb_mse_pos_geo_lattitude(pos) pos->geo.lattitude
+#define rb_mse_pos_geo_longitude(pos) pos->geo.longitude
+#define rb_mse_pos_geo_unit(pos) pos->geo.unit
 
 
 /** 

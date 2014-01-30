@@ -48,28 +48,9 @@ static inline uint64_t mac_from_str(const char *mac)
  *                               rb_mse_api_pos
  * ============================================================ */
  
-struct rb_mse_api_pos{
-  const char * floor;
-  const char * build;
-  const char * zone;
-
-  struct {
-    const char * lattitude;
-    const char * longitude;
-    const char * unit;
-  }geo;
-};
-
-
 void rb_mse_pos_destroy(struct rb_mse_api_pos *pos){
   free(pos);
 }
-
-const char * rb_mse_pos_floor(const struct rb_mse_api_pos *pos){return pos->floor;}
-const char * rb_mse_pos_build(const struct rb_mse_api_pos *pos){return pos->build;}
-const char * rb_mse_pos_zone(const struct rb_mse_api_pos *pos){return pos->zone;}
-
-
 
 /* ====================================================================== *
  *                             Positions nodes
@@ -290,11 +271,26 @@ static bool process_map_info(struct mse_positions_list_node *node, json_t *mapIn
   }
   else
   {
-    // rdbg("Could not locate \"mapHierarchyString\" element (pos: %d)",i);
+    rdbg("Could not locate \"mapHierarchyString\" element");
     return false;
   }
 }
 
+static bool process_geo_coordinate(struct mse_positions_list_node *node, json_t *geoCoordinate, rd_memctx_t *memctx)
+{
+  assert(node);
+  assert(geoCoordinate);
+
+  json_t *lattitude = json_object_get(geoCoordinate,"lattitude");
+  json_t *longitude = json_object_get(geoCoordinate,"longitude");
+  json_t *unit = json_object_get(geoCoordinate,"unit");
+  
+  node->position->geo.lattitude = lattitude ? json_real_value(lattitude) : 0;
+  node->position->geo.longitude = longitude ? json_real_value(longitude) : 0;
+  node->position->geo.unit = unit && json_is_string(unit) ? rd_memctx_strdup(memctx,json_string_value(unit)) : NULL;
+
+  return true;
+}
 
 static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
 {
@@ -303,8 +299,9 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
   if(NULL!=macAddress)
   {
     json_t * mapInfo = json_object_get(entry,"MapInfo");
+    json_t * geoCoordinate = json_object_get(entry,"GeoCoordinate");
 
-    if(NULL!=mapInfo)
+    if(NULL!=mapInfo || NULL!=geoCoordinate)
     {
       struct mse_positions_list_node * node = rd_memctx_calloc(memctx,1,sizeof(*node));
       node->position = rd_memctx_calloc(memctx,1,sizeof(*node->position));
@@ -318,6 +315,11 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
         process_map_info(node,mapInfo,memctx);
       else
         rdbg("Could not locate \"MapInfo\" element");
+
+      if(geoCoordinate && json_is_object(geoCoordinate))
+        process_geo_coordinate(node,geoCoordinate,memctx);
+      else
+        rdbg("Could not locate \"GeoCoordinate\" element");
 
       // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
       RD_AVL_INSERT(avl,node,rd_avl_node);
