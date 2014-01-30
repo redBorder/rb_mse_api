@@ -52,6 +52,12 @@ struct rb_mse_api_pos{
   const char * floor;
   const char * build;
   const char * zone;
+
+  struct {
+    const char * lattitude;
+    const char * longitude;
+    const char * unit;
+  }geo;
 };
 
 
@@ -239,6 +245,90 @@ static void rb_mse_clean(struct rb_mse_api * rb_mse)
   rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
+
+
+static bool extract_mac_address(struct mse_positions_list_node *node, json_t *macAddress)
+{
+  assert(node);
+  assert(macAddress);
+  if(json_is_string(macAddress))
+  {
+    const char * char_macAddress=json_string_value(macAddress);
+    node->mac = mac_from_str(char_macAddress);
+    return true;
+  }
+  else
+  {
+    rdbg("macAddress element is not a string object.");
+    return false; 
+  }
+}
+
+static bool process_map_info(struct mse_positions_list_node *node, json_t *mapInfo, rd_memctx_t *memctx)
+{
+  json_t *mapHierarchyString = json_object_get(mapInfo,"mapHierarchyString");
+  if(mapHierarchyString && json_is_string(mapHierarchyString))
+  {
+    const char *mapHierarchyString_str = json_string_value(mapHierarchyString);
+
+    char * map_string = rd_memctx_strdup(memctx,mapHierarchyString_str); // Will free() with pos
+    if(map_string)
+    {
+      char * aux;
+      node->position->zone  = strtok_r(map_string,">",&aux);
+      if(node->position->zone)
+        node->position->build = strtok_r(NULL,">",&aux);
+      if(node->position->build)
+        node->position->floor = strtok_r(NULL,">",&aux);
+    }
+    else
+    {
+      rdbg("Memory error\n");
+    }
+
+    return true;
+  }
+  else
+  {
+    // rdbg("Could not locate \"mapHierarchyString\" element (pos: %d)",i);
+    return false;
+  }
+}
+
+
+static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
+{
+  json_t * macAddress = json_object_get(entry,"macAddress");
+
+  if(NULL!=macAddress)
+  {
+    json_t * mapInfo = json_object_get(entry,"MapInfo");
+
+    if(NULL!=mapInfo)
+    {
+      struct mse_positions_list_node * node = rd_memctx_calloc(memctx,1,sizeof(*node));
+      node->position = rd_memctx_calloc(memctx,1,sizeof(*node->position));
+      #ifdef MSE_POSITION_LIST_MAGIC
+      node->magic = MSE_POSITION_LIST_MAGIC;
+      #endif
+      extract_mac_address(node,macAddress);
+      // printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
+
+      if(mapInfo && json_is_object(mapInfo))
+        process_map_info(node,mapInfo,memctx);
+      else
+        rdbg("Could not locate \"MapInfo\" element");
+
+      // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
+      RD_AVL_INSERT(avl,node,rd_avl_node);
+    }
+    else
+    {
+      rdbg("Could not found neither \"MapInfo\" nor \"GeoCoordinate\"");
+    }
+  }
+}
+
 static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *memctx,json_t **root)
 {
   assert(root);
@@ -258,65 +348,10 @@ static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *
           unsigned int i;
           for(i = 0; i < json_array_size(entries); i++)
           {
-            json_t *element= json_array_get(entries, i);
-            if(element && json_is_object(element))
+            json_t *entry= json_array_get(entries, i);
+            if(entry && json_is_object(entry))
             {
-              const char * macAddress=NULL;
-              json_t * json_mapHierarchyString = NULL;
-              const char * mapHierarchyString=NULL;
-              json_t * json_macAddress = json_object_get(element,"macAddress");
-
-              if(json_is_string(json_macAddress))
-              {
-                macAddress = json_string_value(json_macAddress);
-              }
-              else
-              {
-                rdbg("Could not locate \"macAddress\" element");
-              }
-
-              if(NULL!=macAddress)
-              {
-                json_t * mapInfo = json_object_get(element,"MapInfo");
-                if(mapInfo && json_is_object(mapInfo))
-                {
-                  json_mapHierarchyString = json_object_get(mapInfo,"mapHierarchyString");
-                  if(json_mapHierarchyString && json_is_string(json_mapHierarchyString))
-                  {
-                    mapHierarchyString = json_string_value(json_mapHierarchyString);
-                  }
-                  else
-                  {
-                    // rdbg("Could not locate \"mapHierarchyString\" element (pos: %d)",i);
-                  }
-                }
-                else
-                {
-                  rdbg("Could not locate \"MapInfo\" element");
-                }
-              }
-
-              if(NULL!=macAddress && NULL!=mapHierarchyString)
-              {
-                struct mse_positions_list_node * node = rd_memctx_calloc(memctx,1,sizeof(*node));
-                node->position = rd_memctx_calloc(memctx,1,sizeof(*node->position));
-                #ifdef MSE_POSITION_LIST_MAGIC
-                node->magic = MSE_POSITION_LIST_MAGIC;
-                #endif
-                node->mac =  mac_from_str(macAddress);
-                // printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
-                
-                char * map_string = rd_memctx_strdup(memctx,mapHierarchyString); // Will free() with pos
-                char * aux;
-                node->position->zone  = strtok_r(map_string,">",&aux);
-                if(node->position->zone)
-                  node->position->build = strtok_r(NULL,">",&aux);
-                if(node->position->build)
-                  node->position->floor = strtok_r(NULL,">",&aux);
-
-                // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
-                RD_AVL_INSERT(avl,node,rd_avl_node);
-              }
+              process_mse_entry(avl,memctx,entry);
             }
             else
             {
@@ -326,9 +361,17 @@ static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *
         }
         else
         {
-          rdbg("entries is not an array");
+          rdbg("Entries is not an array");
         }
       }
+      else
+      {
+        rdbg("Cannot find entries array");
+      }
+    }
+    else
+    {
+      rdbg("Could not get locations node");
     }
   }
   else
