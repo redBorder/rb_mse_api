@@ -247,31 +247,39 @@ static bool extract_mac_address(struct mse_positions_list_node *node, json_t *ma
 
 static bool process_map_info(struct mse_positions_list_node *node, json_t *mapInfo, rd_memctx_t *memctx)
 {
-  json_t *mapHierarchyString = json_object_get(mapInfo,"mapHierarchyString");
-  if(mapHierarchyString && json_is_string(mapHierarchyString))
+  if(mapInfo && json_is_object(mapInfo))
   {
-    const char *mapHierarchyString_str = json_string_value(mapHierarchyString);
-
-    char * map_string = rd_memctx_strdup(memctx,mapHierarchyString_str); // Will free() with pos
-    if(map_string)
+    json_t *mapHierarchyString = json_object_get(mapInfo,"mapHierarchyString");
+    if(mapHierarchyString && json_is_string(mapHierarchyString))
     {
-      char * aux;
-      node->position->zone  = strtok_r(map_string,">",&aux);
-      if(node->position->zone)
-        node->position->build = strtok_r(NULL,">",&aux);
-      if(node->position->build)
-        node->position->floor = strtok_r(NULL,">",&aux);
+      const char *mapHierarchyString_str = json_string_value(mapHierarchyString);
+
+      char * map_string = rd_memctx_strdup(memctx,mapHierarchyString_str); // Will free() with pos
+      if(map_string)
+      {
+        char * aux;
+        node->position->zone  = strtok_r(map_string,">",&aux);
+        if(node->position->zone)
+          node->position->build = strtok_r(NULL,">",&aux);
+        if(node->position->build)
+          node->position->floor = strtok_r(NULL,">",&aux);
+      }
+      else
+      {
+        rdbg("Memory error\n");
+      }
+
+      return true;
     }
     else
     {
-      rdbg("Memory error\n");
+      rdbg("Could not locate \"mapHierarchyString\" element");
+      return false;
     }
-
-    return true;
   }
   else
   {
-    rdbg("Could not locate \"mapHierarchyString\" element");
+    rdbg("Could not locate \"MapInfo\" element");
     return false;
   }
 }
@@ -279,15 +287,22 @@ static bool process_map_info(struct mse_positions_list_node *node, json_t *mapIn
 static bool process_geo_coordinate(struct mse_positions_list_node *node, json_t *geoCoordinate, rd_memctx_t *memctx)
 {
   assert(node);
-  assert(geoCoordinate);
+  if(geoCoordinate)
+  {
+    json_t *lattitude = json_object_get(geoCoordinate,"lattitude");
+    json_t *longitude = json_object_get(geoCoordinate,"longitude");
+    json_t *unit = json_object_get(geoCoordinate,"unit");
 
-  json_t *lattitude = json_object_get(geoCoordinate,"lattitude");
-  json_t *longitude = json_object_get(geoCoordinate,"longitude");
-  json_t *unit = json_object_get(geoCoordinate,"unit");
-  
-  node->position->geo.lattitude = lattitude ? json_real_value(lattitude) : 0;
-  node->position->geo.longitude = longitude ? json_real_value(longitude) : 0;
-  node->position->geo.unit = unit && json_is_string(unit) ? rd_memctx_strdup(memctx,json_string_value(unit)) : NULL;
+    node->position->geo.geo_valid = 1;    
+    node->position->geo.lattitude = lattitude ? json_real_value(lattitude) : 0;
+    node->position->geo.longitude = longitude ? json_real_value(longitude) : 0;
+    node->position->geo.unit = unit && json_is_string(unit) ? rd_memctx_strdup(memctx,json_string_value(unit)) : NULL;
+  }
+  else
+  {
+    rdbg("Could not locate geoCoordinate element.\n");
+    node->position->geo.geo_valid = 0;
+  }
 
   return true;
 }
@@ -311,15 +326,8 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
       extract_mac_address(node,macAddress);
       // printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
 
-      if(mapInfo && json_is_object(mapInfo))
-        process_map_info(node,mapInfo,memctx);
-      else
-        rdbg("Could not locate \"MapInfo\" element");
-
-      if(geoCoordinate && json_is_object(geoCoordinate))
-        process_geo_coordinate(node,geoCoordinate,memctx);
-      else
-        rdbg("Could not locate \"GeoCoordinate\" element");
+      process_map_info(node,mapInfo,memctx);
+      process_geo_coordinate(node,geoCoordinate,memctx);
 
       // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
       RD_AVL_INSERT(avl,node,rd_avl_node);

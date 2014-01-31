@@ -35,22 +35,21 @@ struct rb_mse_api_pos{
   const char * zone;
 
   struct {
+    int geo_valid;
     double lattitude;
     double longitude;
     const char * unit;
   }geo;
 };
 
-
-
 #define rb_mse_pos_floor(pos) pos->floor
 #define rb_mse_pos_build(pos) pos->build
 #define rb_mse_pos_zone(pos) pos->zone
 
+#define rb_mse_pos_geo_valid(pos) pos->geo.geo_valid
 #define rb_mse_pos_geo_lattitude(pos) pos->geo.lattitude
 #define rb_mse_pos_geo_longitude(pos) pos->geo.longitude
 #define rb_mse_pos_geo_unit(pos) pos->geo.unit
-
 
 /** 
   Return a new rb_mse_api struct
