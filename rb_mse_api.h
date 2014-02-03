@@ -81,6 +81,8 @@ void stdout_stats_cb(struct rb_mse_api *rb_mse, struct rb_mse_stats *stats, void
 */
 struct rb_mse_api * rb_mse_api_new(time_t update_time,const char * addr,const char *userpwd);
 
+const char * rb_mse_addr(struct rb_mse_api *rb_mse);
+
 void rb_mse_set_stats_cb(struct rb_mse_api *rb_mse ,stats_cb_fn *stats_cb,void *opaque);
 
 /**

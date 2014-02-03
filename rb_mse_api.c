@@ -625,6 +625,11 @@ struct rb_mse_api * rb_mse_api_new(time_t update_time, const char *addr, const c
   return rb_mse;
 }
 
+const char * rb_mse_addr(struct rb_mse_api *rb_mse)
+{
+  return rb_mse->mse_url;
+}
+
 int rb_mse_isempty(const struct rb_mse_api *rb_mse)
 {
   return rb_mse->memctx?rb_mse->memctx->rmc_out==0:true;
