@@ -56,6 +56,18 @@ int main(int argc,char *argv[]){
 			printf("floor: %s\n",rb_mse_pos_floor(position));
 			printf("build: %s\n",rb_mse_pos_build(position));
 			printf("zone: %s\n",rb_mse_pos_zone(position));
+
+			if(rb_mse_pos_geo_valid(position))
+			{
+				printf("-------\n");
+				printf("lattitude: %lf\n",rb_mse_pos_geo_lattitude(position));
+				printf("longitude: %lf\n",rb_mse_pos_geo_longitude(position));
+				printf("unit: %s\n",rb_mse_pos_geo_unit(position));
+			}
+			else
+			{
+				printf("geo_data not valid\n");
+			}
 		}
 		else
 		{
