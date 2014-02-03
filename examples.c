@@ -22,8 +22,16 @@
 
 #include <assert.h>
 #include <unistd.h>
+#include <semaphore.h>
 
 #define HORIZONTAL_LINE "---------------\n"
+
+void stdout_stats_and_post_sem_cb(struct rb_mse_api *rb_mse, struct rb_mse_stats *stats, void *_sem)
+{
+	sem_t * sem = _sem;
+	stdout_stats_cb(rb_mse,stats,NULL);
+	sem_post(sem);
+}
 
 void printUsage(char *argv0)
 {
@@ -31,6 +39,9 @@ void printUsage(char *argv0)
 }
 
 int main(int argc,char *argv[]){
+	sem_t sem;
+	sem_init(&sem,0,0);
+
 	if(argc!=4)
 	{
 		printUsage(argv[0]);
@@ -38,6 +49,7 @@ int main(int argc,char *argv[]){
 	}
 
 	struct rb_mse_api * rb_mse = rb_mse_api_new(60, argv[1], argv[2]);
+	rb_mse_set_stats_cb(rb_mse,stdout_stats_and_post_sem_cb,&sem);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
@@ -48,7 +60,7 @@ int main(int argc,char *argv[]){
 	if(retCode == CURLE_OK)
 	{
 		printf("Sleeping until mac_position filled\n");
-		sleep(100);
+		sem_wait(&sem);
 		printf("Time to ask\n");
 
 		const struct rb_mse_api_pos *position= rb_mse_req_for_mac(rb_mse,argv[3]);
@@ -75,22 +87,6 @@ int main(int argc,char *argv[]){
 		else
 		{
 			fprintf(stderr,"position cannot be filled because some reason\n");
-		}
-
-		const struct rb_mse_stats *stats = rb_mse_get_stats(rb_mse);
-		if(stats)
-		{
-			printf(HORIZONTAL_LINE);
-			printf("Statistics:\n");
-			printf(HORIZONTAL_LINE);
-			printf("number of macs only map-localized: %d\n",rb_mse_stats_number_of_macs_map_localized(stats));
-			printf("number of macs only geo-localized: %d\n",rb_mse_stats_number_of_macs_geo_localized(stats));
-			printf("number of macs map and geo localized: %d\n",rb_mse_stats_number_of_macs_map_and_geo_localized(stats));
-			printf("number of macs unlocalizables: %d\n",rb_mse_stats_number_of_macs_unlocalizables(stats));
-		}
-		else
-		{
-			fprintf(stderr,"Not valid stats\n");
 		}
 	}
 	else

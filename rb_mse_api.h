@@ -25,8 +25,6 @@
 
 #include "librd/rdlog.h"
 
-struct rb_mse_api;
-
 /// Struct that holds the position of the MAC
 /// Private: Do not use it directly.
 struct rb_mse_api_pos{
@@ -68,6 +66,11 @@ struct rb_mse_stats
 #define rb_mse_stats_number_of_macs_unlocalizables(stats) \
   stats->number_of_macs_unlocalizables
 
+struct rb_mse_api;
+typedef void stats_cb_fn(struct rb_mse_api *rb_mse,struct rb_mse_stats *stats,void *opaque);
+
+void stdout_stats_cb(struct rb_mse_api *rb_mse, struct rb_mse_stats *stats, void *opaque);
+
 /** 
   Return a new rb_mse_api struct
 
@@ -77,6 +80,8 @@ struct rb_mse_stats
      ENOMEM: malloc error
 */
 struct rb_mse_api * rb_mse_api_new(time_t update_time,const char * addr,const char *userpwd);
+
+void rb_mse_set_stats_cb(struct rb_mse_api *rb_mse ,stats_cb_fn *stats_cb,void *opaque);
 
 /**
 	Get the position of a mac from MSE
@@ -101,8 +106,6 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac(struct rb_mse_api *rb_mse,const
 const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uint64_t mac);
 
 int rb_mse_isempty(const struct rb_mse_api * rb_mse);
-
-const struct rb_mse_stats *rb_mse_get_stats(struct rb_mse_api *rb_mse);
 
 #define rb_mse_debug_set(rb_mse,onoff) rd_dbg_set (onoff)
 

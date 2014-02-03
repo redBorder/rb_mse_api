@@ -32,6 +32,8 @@
 #include <stdbool.h>
 #include <sys/queue.h>
 
+#define RB_UNUSED __attribute__((unused))
+
 static const char mse_api_call_url[] = "api/contextaware/v1/location/clients";
 
 static pthread_mutex_t curl_global_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -113,6 +115,8 @@ struct rb_mse_api
   json_error_t error;
 
   struct rb_mse_stats stats;
+  stats_cb_fn *stats_cb;
+  void * stats_cb_opaque;
 };
 
 /*
@@ -539,6 +543,8 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
   rb_mse->memctx = new_memctx;
   rb_mse->avl = new_avl;
   rb_mse->stats = stats;
+  if(rb_mse->stats_cb)
+    rb_mse->stats_cb(rb_mse,&rb_mse->stats,rb_mse->stats_cb_opaque);
   rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   rdbg("Updated");
@@ -645,6 +651,20 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uin
   rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   return ret_node ? ret_node->position : NULL;
+}
+
+void rb_mse_set_stats_cb(struct rb_mse_api *rb_mse ,stats_cb_fn *stats_cb,void *opaque)
+{
+  rb_mse->stats_cb = stats_cb;
+  rb_mse->stats_cb_opaque = opaque;
+}
+
+void stdout_stats_cb(struct rb_mse_api *rb_mse RB_UNUSED, struct rb_mse_stats *stats, void *opaque RB_UNUSED)
+{
+  printf("number of macs only map-localized: %d\n",rb_mse_stats_number_of_macs_map_localized(stats));
+  printf("number of macs only geo-localized: %d\n",rb_mse_stats_number_of_macs_geo_localized(stats));
+  printf("number of macs map and geo localized: %d\n",rb_mse_stats_number_of_macs_map_and_geo_localized(stats));
+  printf("number of macs unlocalizables: %d\n",rb_mse_stats_number_of_macs_unlocalizables(stats));
 }
 
 const struct rb_mse_stats *rb_mse_get_stats(struct rb_mse_api *rb_mse)
