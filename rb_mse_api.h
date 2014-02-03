@@ -51,6 +51,23 @@ struct rb_mse_api_pos{
 #define rb_mse_pos_geo_longitude(pos) pos->geo.longitude
 #define rb_mse_pos_geo_unit(pos) pos->geo.unit
 
+struct rb_mse_stats
+{
+  unsigned int number_of_macs_map_localized;
+  unsigned int number_of_macs_geo_localized;
+  unsigned int number_of_macs_map_and_geo_localized;
+  unsigned int number_of_macs_unlocalizables;
+};
+
+#define rb_mse_stats_number_of_macs_map_localized(stats) \
+  stats->number_of_macs_map_localized
+#define rb_mse_stats_number_of_macs_geo_localized(stats) \
+  stats->number_of_macs_geo_localized
+#define rb_mse_stats_number_of_macs_map_and_geo_localized(stats) \
+  stats->number_of_macs_map_and_geo_localized
+#define rb_mse_stats_number_of_macs_unlocalizables(stats) \
+  stats->number_of_macs_unlocalizables
+
 /** 
   Return a new rb_mse_api struct
 
@@ -85,9 +102,9 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uin
 
 int rb_mse_isempty(const struct rb_mse_api * rb_mse);
 
+const struct rb_mse_stats *rb_mse_get_stats(struct rb_mse_api *rb_mse);
 
 #define rb_mse_debug_set(rb_mse,onoff) rd_dbg_set (onoff)
-
 
 /* call curl_easy_setopt in rb_mse_api */
 CURLcode rb_mse_set_curlopt(struct rb_mse_api* ,const int CURLOPT,void * opt);

@@ -111,6 +111,8 @@ struct rb_mse_api
   rd_memctx_t *memctx;
   
   json_error_t error;
+
+  struct rb_mse_stats stats;
 };
 
 /*
@@ -226,8 +228,6 @@ static void rb_mse_clean(struct rb_mse_api * rb_mse)
   rb_mse->avl = rd_avl_init(NULL,mse_positions_cmp, 0);
 }
 
-
-
 static bool extract_mac_address(struct mse_positions_list_node *node, json_t *macAddress)
 {
   assert(node);
@@ -273,7 +273,7 @@ static bool process_map_info(struct mse_positions_list_node *node, json_t *mapIn
     }
     else
     {
-      rdbg("Could not locate \"mapHierarchyString\" element");
+      // rdbg("Could not locate \"mapHierarchyString\" element");
       return false;
     }
   }
@@ -300,14 +300,14 @@ static bool process_geo_coordinate(struct mse_positions_list_node *node, json_t 
   }
   else
   {
-    rdbg("Could not locate geoCoordinate element.\n");
+    // rdbg("Could not locate geoCoordinate element.\n");
     node->position->geo.geo_valid = 0;
   }
 
-  return true;
+  return node->position->geo.geo_valid;
 }
 
-static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
+static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry,struct rb_mse_stats *stats)
 {
   json_t * macAddress = json_object_get(entry,"macAddress");
 
@@ -326,8 +326,20 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
       extract_mac_address(node,macAddress);
       // printf("DEBUG: macAddr: %12lx\tmacAddr: %s\n",node->mac,macAddress);
 
-      process_map_info(node,mapInfo,memctx);
-      process_geo_coordinate(node,geoCoordinate,memctx);
+      const bool map_info_ret = process_map_info(node,mapInfo,memctx);
+      const bool geo_info_ret = process_geo_coordinate(node,geoCoordinate,memctx);
+
+      if(stats)
+      {
+        if(false==map_info_ret && false==geo_info_ret)
+          rb_mse_stats_number_of_macs_unlocalizables(stats)++;
+        if(false==map_info_ret && true==geo_info_ret)
+          rb_mse_stats_number_of_macs_geo_localized(stats)++;
+        if(true==map_info_ret && false==geo_info_ret)
+          rb_mse_stats_number_of_macs_map_localized(stats)++;
+        if(true==map_info_ret && true==geo_info_ret)
+          rb_mse_stats_number_of_macs_map_and_geo_localized(stats)++;
+      }
 
       // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
       RD_AVL_INSERT(avl,node,rd_avl_node);
@@ -339,7 +351,7 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry)
   }
 }
 
-static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *memctx,json_t **root)
+static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *memctx,struct rb_mse_stats *stats,json_t **root)
 {
   assert(root);
   json_error_t error;
@@ -361,7 +373,7 @@ static void process_mse_response(strbuffer_t *buffer,rd_avl_t *avl,rd_memctx_t *
             json_t *entry= json_array_get(entries, i);
             if(entry && json_is_object(entry))
             {
-              process_mse_entry(avl,memctx,entry);
+              process_mse_entry(avl,memctx,entry,stats);
             }
             else
             {
@@ -424,7 +436,7 @@ static bool has_more_pages(json_t *root)
   return false;
 }
 
-static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked, rd_avl_t *avl, rd_memctx_t *memctx)
+static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool currently_tracked, rd_avl_t *avl, rd_memctx_t *memctx, struct rb_mse_stats *stats)
 {
   bool more_pages = true;
   int current_page = 0;
@@ -436,7 +448,7 @@ static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool curren
     if(ret==CURLE_OK)
     {
       json_t *root;
-      process_mse_response(&rb_mse->buffer,avl,memctx,&root);
+      process_mse_response(&rb_mse->buffer,avl,memctx,stats,&root);
       more_pages = has_more_pages(root);
       current_page++;
       json_decref(root);
@@ -451,11 +463,11 @@ static void get_and_process_mse_response0(struct rb_mse_api *rb_mse, bool curren
   }
 }
 
-#define get_and_process_mse_tracked(rb_mse,avl,memctx) \
-  get_and_process_mse_response0(rb_mse, true,avl,memctx)
+#define get_and_process_mse_tracked(rb_mse,avl,memctx,stats) \
+  get_and_process_mse_response0(rb_mse, true,avl,memctx,stats)
 
-#define get_and_process_mse_nontracked(rb_mse,avl,memctx) \
-  get_and_process_mse_response0(rb_mse, false,avl,memctx)
+#define get_and_process_mse_nontracked(rb_mse,avl,memctx,stats) \
+  get_and_process_mse_response0(rb_mse, false,avl,memctx,stats)
 
 /**
   Update all macs pos in the MSE
@@ -514,14 +526,19 @@ static void rb_mse_update_macs_pos(struct rb_mse_api *rb_mse)
   rd_memctx_init(new_memctx,NULL,RD_MEMCTX_F_TRACK);
   rd_avl_t *new_avl = rd_memctx_calloc(new_memctx,1,sizeof(rd_avl_t));
   rd_avl_init(new_avl,mse_positions_cmp,0);
-  get_and_process_mse_nontracked(rb_mse,new_avl,new_memctx);
+  struct rb_mse_stats stats;
+  memset(&stats,0,sizeof(stats));
+
+
+  get_and_process_mse_nontracked(rb_mse,new_avl,new_memctx,&stats);
   // Note: If we found the same mac, tracked value will overwrite nontracked value
-  get_and_process_mse_tracked(rb_mse,new_avl,new_memctx);
+  get_and_process_mse_tracked(rb_mse,new_avl,new_memctx,&stats);
 
   rd_rwlock_wrlock(&rb_mse->avl_memctx_rwlock);
   rd_memctx_t *old_memctx = rb_mse->memctx;
   rb_mse->memctx = new_memctx;
   rb_mse->avl = new_avl;
+  rb_mse->stats = stats;
   rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   rdbg("Updated");
@@ -628,6 +645,15 @@ const struct rb_mse_api_pos * rb_mse_req_for_mac_i(struct rb_mse_api *rb_mse,uin
   rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
 
   return ret_node ? ret_node->position : NULL;
+}
+
+const struct rb_mse_stats *rb_mse_get_stats(struct rb_mse_api *rb_mse)
+{
+  assert(rb_mse);
+  rd_rwlock_rdlock(&rb_mse->avl_memctx_rwlock);
+  const struct rb_mse_stats *stats = &rb_mse->stats;
+  rd_rwlock_unlock(&rb_mse->avl_memctx_rwlock);
+  return stats;
 }
 
 void rb_mse_api_destroy(struct rb_mse_api * rb_mse)

@@ -23,6 +23,8 @@
 #include <assert.h>
 #include <unistd.h>
 
+#define HORIZONTAL_LINE "---------------\n"
+
 void printUsage(char *argv0)
 {
 	fprintf(stderr,"Usage: %s MSE_IP user:password MAC\n",argv0);
@@ -35,31 +37,32 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new(1, argv[1], argv[2]);
+	struct rb_mse_api * rb_mse = rb_mse_api_new(60, argv[1], argv[2]);
 	
 	assert(rb_mse);
 	assert(rb_mse_isempty(rb_mse));
 
 	rb_mse_debug_set(rb_mse,1);
 
-	const struct rb_mse_api_pos * position=NULL;
-
-	CURLcode retCode = CURLE_OK; // rb_mse_update_macs_pos(rb_mse);
+	CURLcode retCode = CURLE_OK;
 	if(retCode == CURLE_OK)
 	{
 		printf("Sleeping until mac_position filled\n");
-		sleep(250);
+		sleep(100);
 		printf("Time to ask\n");
-		position = rb_mse_req_for_mac(rb_mse,argv[3]);
+
+		const struct rb_mse_api_pos *position= rb_mse_req_for_mac(rb_mse,argv[3]);
 		if(position)
 		{
+			printf(HORIZONTAL_LINE);
+			printf("Location of mac %s\n",argv[3]);
+			printf(HORIZONTAL_LINE);
 			printf("floor: %s\n",rb_mse_pos_floor(position));
 			printf("build: %s\n",rb_mse_pos_build(position));
 			printf("zone: %s\n",rb_mse_pos_zone(position));
 
 			if(rb_mse_pos_geo_valid(position))
 			{
-				printf("-------\n");
 				printf("lattitude: %lf\n",rb_mse_pos_geo_lattitude(position));
 				printf("longitude: %lf\n",rb_mse_pos_geo_longitude(position));
 				printf("unit: %s\n",rb_mse_pos_geo_unit(position));
@@ -72,6 +75,22 @@ int main(int argc,char *argv[]){
 		else
 		{
 			fprintf(stderr,"position cannot be filled because some reason\n");
+		}
+
+		const struct rb_mse_stats *stats = rb_mse_get_stats(rb_mse);
+		if(stats)
+		{
+			printf(HORIZONTAL_LINE);
+			printf("Statistics:\n");
+			printf(HORIZONTAL_LINE);
+			printf("number of macs only map-localized: %d\n",rb_mse_stats_number_of_macs_map_localized(stats));
+			printf("number of macs only geo-localized: %d\n",rb_mse_stats_number_of_macs_geo_localized(stats));
+			printf("number of macs map and geo localized: %d\n",rb_mse_stats_number_of_macs_map_and_geo_localized(stats));
+			printf("number of macs unlocalizables: %d\n",rb_mse_stats_number_of_macs_unlocalizables(stats));
+		}
+		else
+		{
+			fprintf(stderr,"Not valid stats\n");
 		}
 	}
 	else
