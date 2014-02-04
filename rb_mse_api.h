@@ -55,6 +55,9 @@ struct rb_mse_stats
   unsigned int number_of_macs_geo_localized;
   unsigned int number_of_macs_map_and_geo_localized;
   unsigned int number_of_macs_unlocalizables;
+
+  unsigned int number_of_macs_currently_tracked;
+  unsigned int number_of_macs_no_currently_tracked;
 };
 
 #define rb_mse_stats_number_of_macs_map_localized(stats) \

@@ -343,6 +343,17 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry,s
           rb_mse_stats_number_of_macs_map_localized(stats)++;
         if(true==map_info_ret && true==geo_info_ret)
           rb_mse_stats_number_of_macs_map_and_geo_localized(stats)++;
+
+        json_t *json_currently_tracked = json_object_get(entry,"currentlyTracked");
+        if(json_currently_tracked)
+        {
+          if(json_is_true(json_currently_tracked))
+            stats->number_of_macs_currently_tracked++;
+          else if(json_is_false(json_currently_tracked))
+            stats->number_of_macs_no_currently_tracked++;
+          else
+            rdbg("currentlyTracked is neither true nor false");
+        }
       }
 
       // rdbg("Inserting node %lx: %s\n",node->mac,map_string);
