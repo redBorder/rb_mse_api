@@ -69,6 +69,8 @@ int main(int argc,char *argv[]){
 			printf(HORIZONTAL_LINE);
 			printf("Location of mac %s\n",argv[3]);
 			printf(HORIZONTAL_LINE);
+			printf("Currently tracked: %d\n",rb_mse_pos_currently_tracked(position));
+			printf(HORIZONTAL_LINE);
 			printf("floor: %s\n",rb_mse_pos_floor(position));
 			printf("build: %s\n",rb_mse_pos_build(position));
 			printf("zone: %s\n",rb_mse_pos_zone(position));

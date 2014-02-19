@@ -28,6 +28,8 @@
 /// Struct that holds the position of the MAC
 /// Private: Do not use it directly.
 struct rb_mse_api_pos{
+  int currently_tracked;
+
   const char * floor;
   const char * build;
   const char * zone;
@@ -39,6 +41,8 @@ struct rb_mse_api_pos{
     const char * unit;
   }geo;
 };
+
+#define rb_mse_pos_currently_tracked(pos) pos->currently_tracked
 
 #define rb_mse_pos_floor(pos) pos->floor
 #define rb_mse_pos_build(pos) pos->build

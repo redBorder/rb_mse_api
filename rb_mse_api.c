@@ -348,9 +348,15 @@ static void process_mse_entry(rd_avl_t *avl,rd_memctx_t *memctx, json_t *entry,s
         if(json_currently_tracked)
         {
           if(json_is_true(json_currently_tracked))
+          {
             stats->number_of_macs_currently_tracked++;
+            node->position->currently_tracked = 1;
+          }
           else if(json_is_false(json_currently_tracked))
+          {
             stats->number_of_macs_no_currently_tracked++;
+            node->position->currently_tracked = 0;
+          }
           else
             rdbg("currentlyTracked is neither true nor false");
         }
