@@ -1,5 +1,5 @@
-#CFLAGS=-W -Wall -O3 -g -fpic
-CFLAGS=-W -Wall -O0 -g -fpic
+CFLAGS=-W -Wall -O3 -g -fpic
+#CFLAGS=-W -Wall -O0 -g -fpic -D_FORTIFY_SOURCE=2 
 
 DESTDIR=/opt/rb
 

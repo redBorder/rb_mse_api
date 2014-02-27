@@ -258,6 +258,9 @@ static bool process_map_info(struct mse_positions_list_node *node, json_t *mapIn
     {
       const char *mapHierarchyString_str = json_string_value(mapHierarchyString);
 
+      if(NULL==mapHierarchyString_str)
+        return false;
+
       char * map_string = rd_memctx_strdup(memctx,mapHierarchyString_str); // Will free() with pos
       if(map_string)
       {

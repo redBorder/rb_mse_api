@@ -48,7 +48,7 @@ int main(int argc,char *argv[]){
 		return(1);
 	}
 
-	struct rb_mse_api * rb_mse = rb_mse_api_new(60, argv[1], argv[2]);
+	struct rb_mse_api * rb_mse = rb_mse_api_new(5, argv[1], argv[2]);
 	rb_mse_set_stats_cb(rb_mse,stdout_stats_and_post_sem_cb,&sem);
 	
 	assert(rb_mse);
@@ -96,7 +96,7 @@ int main(int argc,char *argv[]){
 		fprintf(stderr,"There was an error updating MAC positions: %s",curl_easy_strerror(retCode));
 	}
 
-	// sleep(600); // Wating for auto-update. 
+	sleep(600); // Wating for auto-update. 
 
 	rb_mse_api_destroy(rb_mse);
 
